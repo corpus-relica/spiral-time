@@ -49,7 +49,9 @@ import GUI from 'three/addons/libs/lil-gui.module.min.js';
 
 // ---------------------------------------------------------------- parameters
 const now = new Date();
+const query = new URLSearchParams(location.search);
 const P = {
+  view:        ['spiral', 'coil', 'linear', 'week'].includes(query.get('view')) ? query.get('view') : 'spiral',
   flow:        'inward',  // 'inward': future spirals toward the centre, past falls off the outer edge.
                           // 'outward': the reverse, past descends into the well.
   growth:      'log',  // 'linear': turns equally spaced. 'log': each turn is a fixed multiple
@@ -58,12 +60,14 @@ const P = {
   turnSpacing: 1.0,    // distance between turn 0 and turn 1, measured along the cone surface
   ribbonFill:  0.85,   // ribbon width as a fraction of the local turn spacing (1 = touching)
   baseRadius:  6,      // radius of the ribbon centreline at s = 0 (today's midnight)
+  coilPitch:   0.75,   // coil view: how far each day's loop advances, in loop diameters
   daysPast:    2,
   daysFuture:  3,
-  tilt:        30,     // camera tilt in degrees, 0 = straight down (the 2D view)
+  tilt:        30,     // camera tilt in degrees, 0 = straight down (the 2D view); set below per view
   spin:        0,
   zoom:        1,
-  followTime:  true,   // scale the camera about the cone apex so the "now" marker stays put on screen
+  followTime:  true,   // keep the "now" marker fixed on screen as time passes
+  morph:       1,      // progress of the current view transition, 0 = from, 1 = to
   nowHour:     now.getHours() + now.getMinutes() / 60,   // continuous, never wraps
   play:        false,
   speed:       2,      // hours per second while playing
@@ -79,13 +83,17 @@ const P = {
 // ---------------------------------------------------------------- helpers
 const BG = new THREE.Color('#0e0f13');
 const BASE = new THREE.Color('#2b2e3a');
+const Z = new THREE.Vector3(0, 0, 1);
 const nowDay = () => P.nowHour / 24;
+const easeInOut = k => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+if (P.view === 'coil') P.tilt = 38; else if (P.view !== 'spiral') P.tilt = 0;
 
-// Cone frame. Everything lives on the surface of a cone whose generatrix through
+// ---------------------------------------------------------------- spiral geometry
+// Cone frame. The spiral lives on the surface of a cone whose generatrix through
 // (r = baseRadius, z = 0) makes angle `a` with the horizontal. rho = distance from the
 // apex along the generatrix. The helix is rho(s), and the ribbon is offset across rho.
 // dir = +1 when time flows outward (rho grows with s), -1 when it flows inward.
-function frame() {
+function spiralFrame() {
   const aDeg = P.growth === 'log' ? Math.min(P.coneAngle, 85) : P.coneAngle;
   const a  = THREE.MathUtils.degToRad(aDeg);
   const ca = Math.cos(a), sa = Math.sin(a);
@@ -110,38 +118,144 @@ function frame() {
   return F;
 }
 
-// s = time in days (fractional part = time of day, 0 = today's midnight)
-// v = position across the ribbon, -0.5 (inner/lower edge) .. 0.5 (outer/upper edge)
-// lift = offset along the surface normal (up and inward), for lines drawn on top
-function place(s, v, lift = 0, F = frame()) {
-  let r, z;
-  if (F.apex) {
-    const rho = F.rhoAt(s, v);
-    r = rho * F.ca;
-    z = F.apex.z + rho * F.sa;
-  } else {                                          // cylinder wall: rho is meaningless
-    const w = P.ribbonFill * F.D;
-    r = P.baseRadius;
-    z = F.dir * F.D * s + v * w;
-  }
-  const th = Math.PI / 2 - 2 * Math.PI * s;         // midnight at top, clockwise
-  const c = Math.cos(th), sn = Math.sin(th);
-  return new THREE.Vector3((r - lift * F.sa) * c, (r - lift * F.sa) * sn, z + lift * F.ca);
-}
-
-// visible range of s, clamped in linear mode so the inner edge never crosses the axis
+// visible range of s, clamped in linear growth so the spiral's inner edge never crosses the axis
 function sRange(F) {
   let sMin = nowDay() - P.daysPast, sMax = nowDay() + P.daysFuture;
   if (P.growth === 'linear' && F.apex) {
-    // inner edge: rhoAt(s, -0.5) * ca > 0.3
-    // turns until the ribbon would reach the axis, in whichever direction rho shrinks
     const sLimit = (F.rho0 - 0.5 * P.ribbonFill * F.D - 0.3 / F.ca) / F.D;
     if (F.dir > 0) sMin = Math.max(sMin, -sLimit); else sMax = Math.min(sMax, sLimit);
   }
   return [sMin, sMax];
 }
 
-// shading relative to now: the past fades toward the background as it leaves,
+// ---------------------------------------------------------------- layouts
+// A layout maps strip coordinates to world space and defines a camera pose. Every view is a
+// different layout of the same strip, so a transition is a lerp between two layouts.
+//   s    = time in days (fractional part = time of day, 0 = today's midnight)
+//   v    = lane across the strip, -0.5 (inner edge) .. 0.5 (outer edge)
+//   lift = offset along the surface normal, for lines drawn on top
+//   day  = which day segment s belongs to; only matters where the strip is cut at midnight
+// basePose: the camera orbit shared by all layouts, from tilt / spin / zoom around a target.
+function basePose(target, dist) {
+  const t = THREE.MathUtils.degToRad(P.tilt), sp = THREE.MathUtils.degToRad(P.spin);
+  const pos = new THREE.Vector3(0, -dist * Math.sin(t), dist * Math.cos(t)).applyAxisAngle(Z, sp).add(target);
+  const up  = new THREE.Vector3(0,  Math.cos(t), Math.sin(t)).applyAxisAngle(Z, sp);
+  return { pos, up, target: target.clone() };
+}
+
+function makeLayouts() {
+  const F = spiralFrame();
+  const [sMin, sMax] = sRange(F);
+  const sNow = nowDay(), today = Math.floor(sNow);
+  const W = P.turnSpacing * P.ribbonFill;   // strip width in the flat layouts
+  const L = 2 * Math.PI * P.baseRadius;     // one day unrolled: the length of turn 0
+  const vGap = 0.5 / P.ribbonFill;          // middle of the gap outside the strip
+
+  const spiral = {
+    name: 'spiral', upright: false, defaultTilt: 30, F, range: [sMin, sMax],
+    place(s, v, lift = 0) {
+      let r, z;
+      if (F.apex) {
+        const rho = F.rhoAt(s, v);
+        r = rho * F.ca;
+        z = F.apex.z + rho * F.sa;
+      } else {                                      // cylinder wall
+        r = P.baseRadius;
+        z = F.dir * F.D * s + v * W;
+      }
+      const th = Math.PI / 2 - 2 * Math.PI * s;     // midnight at top, clockwise
+      return new THREE.Vector3((r - lift * F.sa) * Math.cos(th), (r - lift * F.sa) * Math.sin(th), z + lift * F.ca);
+    },
+    anchorDay(d) { return this.place(d, vGap); },
+    anchorHour(s) { return this.place(s, vGap); },
+    spoke(s) { const m = this.place(s, 0.62, 0.03); return new THREE.Vector3(0, 0, m.z); },
+    // scale the orbit about the cone apex by the similarity factor between turn 0 and now,
+    // so the marker projects to the same screen point at every hour of every day
+    camera() {
+      const pose = basePose(new THREE.Vector3(0, 0, 0), 17 / P.zoom);
+      if (P.followTime) {
+        if (F.apex) {
+          const k = F.scaleAt(sNow);
+          pose.pos.sub(F.apex).multiplyScalar(k).add(F.apex);
+          pose.target.sub(F.apex).multiplyScalar(k).add(F.apex);
+        } else {
+          const dz = F.dir * F.D * sNow;
+          pose.pos.z += dz; pose.target.z += dz;
+        }
+      }
+      return pose;
+    },
+  };
+
+  // one loop per day at constant radius in the screen plane, the loop centre advancing
+  // along x: a slinky laid along the time axis. Every day is the same size.
+  const pitch = P.coilPitch * 2 * P.baseRadius;
+  const coil = {
+    name: 'coil', upright: false, defaultTilt: 38, range: [sMin, sMax],
+    place(s, v, lift = 0) {
+      const th = Math.PI / 2 - 2 * Math.PI * s, r = P.baseRadius + v * W;
+      return new THREE.Vector3(s * pitch + r * Math.cos(th), r * Math.sin(th), lift);
+    },
+    anchorDay(d) { return this.place(d, vGap); },
+    anchorHour(s) { return this.place(s, vGap); },
+    spoke(s) { return new THREE.Vector3(s * pitch, 0, 0); },
+    camera() {
+      const x = P.followTime ? sNow * pitch : 0;
+      return basePose(new THREE.Vector3(x, 0, 0), 17 / P.zoom * 1.2);
+    },
+  };
+
+  const linear = {
+    name: 'linear', upright: true, defaultTilt: 0, range: [sMin, sMax],
+    place(s, v, lift = 0) { return new THREE.Vector3(s * L, v * W, lift); },
+    anchorDay(d) { return this.place(d, vGap + 0.25); },
+    anchorHour(s) { return this.place(s, vGap); },
+    spoke() { return null; },
+    camera() {
+      const x = P.followTime ? sNow * L : 0;
+      return basePose(new THREE.Vector3(x, 0, 0), 17 / P.zoom * 1.5);
+    },
+  };
+
+  const colW = 5, dayH = 18, i0 = Math.floor(sMin) - today, i1 = Math.floor(sMax) - today;
+  const week = {
+    name: 'week', upright: true, defaultTilt: 0, range: [sMin, sMax],
+    // one column per day, time running down, today at x = 0
+    place(s, v, lift = 0, day = Math.floor(s)) {
+      return new THREE.Vector3((day - today) * colW + v * 0.8 * colW, -(s - day) * dayH, lift);
+    },
+    anchorDay(d) { return this.place(d, 0, 0, d).add(new THREE.Vector3(0, 1.2, 0)); },
+    anchorHour(s) { return new THREE.Vector3((i0 - 0.75) * colW, -(s - Math.floor(s)) * dayH, 0); },
+    spoke() { return null; },
+    camera() {
+      return basePose(new THREE.Vector3((i0 + i1) / 2 * colW, -dayH / 2, 0), 17 / P.zoom * 2.6);
+    },
+  };
+
+  return { spiral, coil, linear, week };
+}
+
+// ---------------------------------------------------------------- view transition state
+const view = { from: P.view, to: P.view, anim: false, tiltFrom: P.tilt, tiltTo: P.tilt };
+let LAY = null;                     // current layouts, rebuilt with the geometry
+const mixK = () => easeInOut(P.morph);
+
+function setView(name) {
+  if (!LAY[name]) return;
+  view.from = view.to; view.to = name;
+  view.tiltFrom = P.tilt; view.tiltTo = LAY[name].defaultTilt;
+  P.morph = 0; view.anim = true;
+}
+
+// a strip point in both layouts of the transition
+function pair(s, v, lift = 0, day) {
+  return [LAY[view.from].place(s, v, lift, day), LAY[view.to].place(s, v, lift, day)];
+}
+const _m = new THREE.Vector3();
+function mixV(p) { return _m.copy(p[0]).lerp(p[1], mixK()); }
+
+// ---------------------------------------------------------------- shading
+// relative to now: the past fades toward the background as it leaves,
 // the future darkens the further off it is
 function shade(color, s) {
   const c = color.clone(), d = s - nowDay();
@@ -154,8 +268,6 @@ function shade(color, s) {
   }
   return c;
 }
-
-// overlay opacity, same falloff as the surface shading
 function labelAlpha(s) {
   const d = s - nowDay();
   if (d < 0) return THREE.MathUtils.lerp(0.85, 0.12, THREE.MathUtils.clamp(-d / Math.max(P.daysPast, 1), 0, 1));
@@ -168,16 +280,16 @@ function sampleTasks(sMin, sMax) {
   const tasks = [];
   for (let d = Math.floor(sMin) - 1; d <= Math.ceil(sMax); d++) {
     const b = d * 24, wk = ((d % 7) + 7) % 7;
-    tasks.push({ s: b + 23, e: b + 31, c: '#514a80', n: 'Sleep' });           // sleep, crosses midnight
+    tasks.push({ s: b + 23, e: b + 31, c: '#514a80', n: 'Sleep' });
     if (wk === 2 || wk === 5) {
       tasks.push({ s: b + 10, e: b + 14, c: '#3c7a72', n: 'Design review' });
     } else {
-      tasks.push({ s: b + 9,    e: b + 12.5, c: '#2f8f85', n: 'Write API documentation' });     // focus
-      tasks.push({ s: b + 13.5, e: b + 17,   c: '#3d6e9c', n: 'Billing integration' });     // work
+      tasks.push({ s: b + 9,    e: b + 12.5, c: '#2f8f85', n: 'Write API documentation' });
+      tasks.push({ s: b + 13.5, e: b + 17,   c: '#3d6e9c', n: 'Billing integration' });
     }
-    tasks.push({ s: b + 7.25, e: b + 8,  c: '#7a8a3a', n: 'Morning routine' });         // routine
-    tasks.push({ s: b + 18,   e: b + 19, c: '#b0743a', n: 'Gym' });         // gym
-    tasks.push({ s: b + 20.5, e: b + 22, c: '#6a4f5f', n: 'Reading' });         // evening
+    tasks.push({ s: b + 7.25, e: b + 8,  c: '#7a8a3a', n: 'Morning routine' });
+    tasks.push({ s: b + 18,   e: b + 19, c: '#b0743a', n: 'Gym' });
+    tasks.push({ s: b + 20.5, e: b + 22, c: '#6a4f5f', n: 'Reading' });
   }
   return tasks;
 }
@@ -219,100 +331,129 @@ const tickMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: t
 const nowMat  = new THREE.LineBasicMaterial({ color: '#f39a2b' });
 const postMat = new THREE.LineBasicMaterial({ color: '#f39a2b', transparent: true, opacity: 0.18 });
 const dotMat  = new THREE.MeshBasicMaterial({ color: '#f39a2b' });
-const axisMat = new THREE.MeshBasicMaterial({ color: '#3a3d4a' });
+
+// Every built object keeps its vertex positions in both layouts; applyMorph lerps them.
+let morphs = [];        // { geom, a, b, mesh }
+let morphObjs = [];     // { obj, a, b }   (whole objects moved by position)
+
+function morphGeometry(a, b, isMesh) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(a.length), 3));
+  morphs.push({ geom: g, a: Float32Array.from(a), b: Float32Array.from(b), mesh: isMesh });
+  return g;
+}
+function applyMorph() {
+  const k = mixK(), j = 1 - k;
+  for (const m of morphs) {
+    const arr = m.geom.attributes.position.array;
+    for (let i = 0; i < arr.length; i++) arr[i] = m.a[i] * j + m.b[i] * k;
+    m.geom.attributes.position.needsUpdate = true;
+    if (m.mesh) m.geom.computeVertexNormals();
+    m.geom.computeBoundingSphere();
+  }
+  for (const o of morphObjs) o.obj.position.copy(o.a).lerp(o.b, k);
+}
 
 function clearRoot() {
   for (const o of [...root.children]) { root.remove(o); o.geometry?.dispose(); }
+  morphs = []; morphObjs = [];
 }
+
+function push(arr, p) { arr.push(p.x, p.y, p.z); }
 
 function build() {
   clearRoot();
-  const F = frame();
-  const [sMin, sMax] = sRange(F);
+  LAY = makeLayouts();
+  const [sMin, sMax] = LAY[view.to].range;
   const stepsPerDay = 24 * 10;
-  const n = Math.max(2, Math.round((sMax - sMin) * stepsPerDay));
   const tasks = sampleTasks(sMin, sMax);
 
-  // --- ribbon surface
-  const pos = [], col = [], idx = [];
-  const edgeIn = [], edgeOut = [], edgeCol = [];
-  for (let i = 0; i <= n; i++) {
-    const s = sMin + (sMax - sMin) * i / n;
-    const c = colorAt(s, tasks);
-    const pi = place(s, -0.5, 0, F), po = place(s, 0.5, 0, F);
-    pos.push(pi.x, pi.y, pi.z, po.x, po.y, po.z);
-    col.push(c.r, c.g, c.b, c.r, c.g, c.b);
-    if (i < n) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
-    const ec = c.clone().multiplyScalar(1.6).lerp(new THREE.Color('#ffffff'), 0.15);
-    const li = place(s, -0.5, 0.01, F), lo = place(s, 0.5, 0.01, F);
-    edgeIn.push(li.x, li.y, li.z); edgeOut.push(lo.x, lo.y, lo.z);
-    edgeCol.push(ec.r, ec.g, ec.b);
+  // --- ribbon surface, one run per day so the strip can tear at midnight
+  const posA = [], posB = [], col = [], idx = [];
+  const edgeA = [], edgeB = [], edgeCol = [];
+  let vi = 0;
+  for (let day = Math.floor(sMin); day <= Math.floor(sMax); day++) {
+    const a = Math.max(sMin, day), b = Math.min(sMax, day + 1);
+    if (b - a <= 1e-6) continue;
+    const n = Math.max(2, Math.round((b - a) * stepsPerDay));
+    let prevIn = null, prevOut = null;
+    for (let i = 0; i <= n; i++) {
+      const s = a + (b - a) * i / n;
+      const c = colorAt(s, tasks);
+      const pi = pair(s, -0.5, 0, day), po = pair(s, 0.5, 0, day);
+      push(posA, pi[0]); push(posA, po[0]); push(posB, pi[1]); push(posB, po[1]);
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      if (i < n) idx.push(vi, vi + 1, vi + 2, vi + 1, vi + 3, vi + 2);
+      vi += 2;
+      // edges as segments, lifted a hair
+      const ec = c.clone().multiplyScalar(1.6).lerp(new THREE.Color('#ffffff'), 0.15);
+      const li = pair(s, -0.5, 0.01, day), lo = pair(s, 0.5, 0.01, day);
+      if (prevIn) {
+        push(edgeA, prevIn[0]); push(edgeA, li[0]); push(edgeB, prevIn[1]); push(edgeB, li[1]);
+        push(edgeA, prevOut[0]); push(edgeA, lo[0]); push(edgeB, prevOut[1]); push(edgeB, lo[1]);
+        for (let k = 0; k < 4; k++) edgeCol.push(ec.r, ec.g, ec.b);
+      }
+      prevIn = li; prevOut = lo;
+    }
   }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const g = morphGeometry(posA, posB, true);
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx);
-  g.computeVertexNormals();
   root.add(new THREE.Mesh(g, ribbonMat));
 
-  // --- edges
   if (P.showEdges) {
-    for (const arr of [edgeIn, edgeOut]) {
-      const lg = new THREE.BufferGeometry();
-      lg.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
-      lg.setAttribute('color', new THREE.Float32BufferAttribute(edgeCol, 3));
-      root.add(new THREE.Line(lg, edgeMat));
-    }
+    const eg = morphGeometry(edgeA, edgeB, false);
+    eg.setAttribute('color', new THREE.Float32BufferAttribute(edgeCol, 3));
+    root.add(new THREE.LineSegments(eg, edgeMat));
   }
 
   // --- hour ticks
   if (P.showTicks) {
-    const tp = [], tc = [];
+    const ta = [], tb = [], tc = [];
     const h0 = Math.ceil(sMin * 24), h1 = Math.floor(sMax * 24);
     for (let h = h0; h <= h1; h++) {
-      const s = h / 24, hod = ((h % 24) + 24) % 24;
+      const s = h / 24, hod = ((h % 24) + 24) % 24, day = Math.floor(s + 1e-9);
       const major = hod % 6 === 0, mid = hod % 3 === 0;
       const v0 = major ? -0.5 : mid ? 0.2 : 0.35;
-      const a = place(s, v0, 0.02, F), b = place(s, 0.5, 0.02, F);
+      const p0 = pair(s, v0, 0.02, day), p1 = pair(s, 0.5, 0.02, day);
+      push(ta, p0[0]); push(ta, p1[0]); push(tb, p0[1]); push(tb, p1[1]);
       const c = shade(new THREE.Color(major ? '#c9cbd6' : '#8d90a0'), s);
-      tp.push(a.x, a.y, a.z, b.x, b.y, b.z);
       tc.push(c.r, c.g, c.b, c.r, c.g, c.b);
     }
-    const tg = new THREE.BufferGeometry();
-    tg.setAttribute('position', new THREE.Float32BufferAttribute(tp, 3));
+    const tg = morphGeometry(ta, tb, false);
     tg.setAttribute('color', new THREE.Float32BufferAttribute(tc, 3));
     root.add(new THREE.LineSegments(tg, tickMat));
   }
 
-  // --- "now" marker
-  const sNow = nowDay();
-  const a = place(sNow, -0.5, 0.03, F), b = place(sNow, 0.62, 0.03, F);
-  root.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), nowMat));
-  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.07 * F.scaleAt(sNow), 16, 12), dotMat);
-  dot.position.copy(place(sNow, 0.5, 0.03, F));
+  // --- "now" marker: a line across the strip, a dot on the outer edge, a faint spoke to the axis
+  const sNow = nowDay(), dNow = Math.floor(sNow);
+  const m0 = pair(sNow, -0.5, 0.03, dNow), m1 = pair(sNow, 0.62, 0.03, dNow);
+  const la = [], lb = [];
+  push(la, m0[0]); push(la, m1[0]); push(lb, m0[1]); push(lb, m1[1]);
+  root.add(new THREE.LineSegments(morphGeometry(la, lb, false), nowMat));
+  const dotPair = pair(sNow, 0.5, 0.03, dNow);
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.07 * (LAY.spiral.F.scaleAt(sNow) || 1), 16, 12), dotMat);
+  morphObjs.push({ obj: dot, a: dotPair[0], b: dotPair[1] });
   root.add(dot);
-  // faint spoke from the marker to the axis, to read depth
-  root.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([b, new THREE.Vector3(0, 0, b.z)]), postMat));
+  const spokes = [LAY[view.from].spoke(sNow) || m1[0], LAY[view.to].spoke(sNow) || m1[1]];
+  const sa = [], sb = [];
+  push(sa, m1[0]); push(sa, spokes[0]); push(sb, m1[1]); push(sb, spokes[1]);
+  root.add(new THREE.LineSegments(morphGeometry(sa, sb, false), postMat));
 
-  // --- axis dot at the marker's height, for orientation
-  const centre = new THREE.Mesh(new THREE.SphereGeometry(0.05 * F.scaleAt(sNow), 12, 8), axisMat);
-  centre.position.set(0, 0, b.z);
-  root.add(centre);
-
-  buildLabels(F, sMin, sMax, tasks);
+  buildLabels(sMin, sMax, tasks);
+  applyMorph();
 }
 
 // ---------------------------------------------------------------- overlay labels
-// Each label has a 3D anchor on the ribbon and is positioned in screen space every frame.
-// Elements are keyed and reused so that rebuilding while time plays does not churn the DOM.
+// Each label has a 3D anchor pair (one per layout) and is positioned in screen space every
+// frame. Elements are keyed and reused so rebuilding while time plays does not churn the DOM.
 const overlay = document.getElementById('overlay');
-const labelPool = new Map();     // key -> { el, ...spec }
+const labelPool = new Map();
 let labels = [];
 
 function fmtHour(h) {
   const hod = ((h % 24) + 24) % 24;
-  const ap = hod < 12 ? 'AM' : 'PM', h12 = hod % 12 === 0 ? 12 : hod % 12;
-  return `${h12} ${ap}`;
+  return `${hod % 12 === 0 ? 12 : hod % 12} ${hod < 12 ? 'AM' : 'PM'}`;
 }
 function fmtClock(hour) {
   const h = ((hour % 24) + 24) % 24;
@@ -341,11 +482,11 @@ function label(key, kind, html, spec) {
   labels.push(L);
 }
 
-function buildLabels(F, sMin, sMax, tasks) {
+function buildLabels(sMin, sMax, tasks) {
   labels = [];
   for (const L of labelPool.values()) L.used = false;
-  const sNow = nowDay();
-  const vGap = 0.5 / P.ribbonFill;   // middle of the gap between this turn and the next one out
+  const sNow = nowDay(), dNow = Math.floor(sNow);
+  const A = LAY[view.from], B = LAY[view.to];
 
   if (P.labels) {
     // hour labels: the occurrence of each hour nearest to now, every 3 hours; midnight is the day label
@@ -353,19 +494,18 @@ function buildLabels(F, sMin, sMax, tasks) {
       const delta = ((hh / 24 - sNow) % 1 + 1.5) % 1 - 0.5;
       const s = sNow + delta;
       if (s < sMin || s > sMax) continue;
-      label('hour' + hh, 'hour', fmtHour(hh), { anchor: place(s, vGap, 0, F), s });
+      label('hour' + hh, 'hour', fmtHour(hh), { anchor: [A.anchorHour(s), B.anchorHour(s)], s });
     }
-    // day labels at every midnight in view, stacked up the top radial
     for (let d = Math.ceil(sMin); d <= Math.floor(sMax); d++) {
-      label('day' + d, 'day', dayLabel(d), { anchor: place(d, vGap, 0, F), s: d });
+      label('day' + d, 'day', dayLabel(d), { anchor: [A.anchorDay(d), B.anchorDay(d)], s: d });
     }
-    // now readout, as a callout beside the marker
     const cur = tasks.find(t => P.nowHour >= t.s && P.nowHour < t.e);
     const html = `<div class="t">${fmtClock(P.nowHour)}</div>` + (cur
       ? `<div class="n">${cur.n}</div><div class="u">until ${fmtClock(cur.e)} · ${fmtDuration(cur.e - P.nowHour)} left</div>`
       : `<div class="u">free</div>`);
-    const m = place(sNow, 0.62, 0.03, F);
-    label('now', 'now', html, { anchor: m, axis: new THREE.Vector3(0, 0, m.z), s: sNow, callout: true });
+    label('now', 'now', html, {
+      anchor: pair(sNow, 0.62, 0.03, dNow), inner: pair(sNow, -0.5, 0.03, dNow), s: sNow, callout: true,
+    });
   }
 
   if (P.taskLabels) {
@@ -374,12 +514,12 @@ function buildLabels(F, sMin, sMax, tasks) {
       if (b - a < 0.25) continue;
       const mid = (a + b) / 2 / 24;
       if (Math.abs(mid - sNow) > P.labelDays) continue;
-      const pts = [];
-      for (let i = 0; i <= 8; i++) pts.push(place((a + (b - a) * i / 8) / 24, 0, 0.005, F));
+      const day = Math.floor(mid);
+      const arc = [];
+      for (let i = 0; i <= 8; i++) arc.push(pair((a + (b - a) * i / 8) / 24, 0, 0.005, day));
       label('task' + t.s, 'task', t.n, {
-        anchor: pts[4], s: mid,
-        tanA: pts[3], tanB: pts[5],          // same lift as the anchor, a quarter of the task apart
-        wIn: place(mid, -0.5, 0, F), wOut: place(mid, 0.5, 0, F), arc: pts,
+        anchor: arc[4], s: mid, tanA: arc[3], tanB: arc[5], arc,
+        wIn: pair(mid, -0.5, 0, day), wOut: pair(mid, 0.5, 0, day),
       });
     }
   }
@@ -395,28 +535,35 @@ function toScreen(p, w, h) {
 
 function updateOverlay() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
+  const uprightK = THREE.MathUtils.lerp(LAY[view.from].upright ? 1 : 0, LAY[view.to].upright ? 1 : 0, mixK());
   for (const L of labels) {
-    const p = toScreen(L.anchor, w, h);
+    const p = toScreen(mixV(L.anchor), w, h);
     const el = L.el;
     if (p.behind || p.x < -200 || p.x > w + 200 || p.y < -100 || p.y > h + 100) { el.style.display = 'none'; continue; }
     let rot = 0, tx = -50, ty = -50, ox = 0, oy = 0, scale = 1, show = true;
 
     if (L.kind === 'task') {
-      // rotate along the ribbon's projected tangent, keep text reading left to right
-      const ta = toScreen(L.tanA, w, h), tb = toScreen(L.tanB, w, h);
+      // rotate along the strip's projected tangent, keep text reading left to right,
+      // and relax toward upright in the flat layouts
+      const ta = toScreen(mixV(L.tanA), w, h), tb = toScreen(mixV(L.tanB), w, h);
       rot = Math.atan2(tb.y - ta.y, tb.x - ta.x) * 180 / Math.PI;
       if (rot > 90) rot -= 180; else if (rot < -90) rot += 180;
-      // size with the projected ribbon width, hide when the ribbon is too thin or the arc too short
-      const wi = toScreen(L.wIn, w, h), wo = toScreen(L.wOut, w, h);
+      rot *= 1 - uprightK;
+      // size with the projected strip width on the spiral, fixed size when upright
+      const wi = toScreen(mixV(L.wIn), w, h), wo = toScreen(mixV(L.wOut), w, h);
       const ribbonPx = Math.hypot(wo.x - wi.x, wo.y - wi.y);
-      scale = THREE.MathUtils.clamp(ribbonPx / 34, 0.6, 1.4);
-      let arcPx = 0, prev = null;
-      for (const a of L.arc) { const c = toScreen(a, w, h); if (prev) arcPx += Math.hypot(c.x - prev.x, c.y - prev.y); prev = c; }
+      scale = THREE.MathUtils.lerp(THREE.MathUtils.clamp(ribbonPx / 34, 0.6, 1.4), 1, uprightK);
+      // room for the text: the strip's extent along the text direction (arc chord or strip
+      // width, whichever runs that way) must fit the text, and across it must fit a line
+      const c0 = toScreen(mixV(L.arc[0]), w, h), c1 = toScreen(mixV(L.arc[8]), w, h);
+      const r = rot * Math.PI / 180, dx = Math.cos(r), dy = Math.sin(r);
+      const along  = Math.max(Math.abs((c1.x - c0.x) * dx + (c1.y - c0.y) * dy), Math.abs((wo.x - wi.x) * dx + (wo.y - wi.y) * dy));
+      const across = Math.max(Math.abs(-(c1.x - c0.x) * dy + (c1.y - c0.y) * dx), Math.abs(-(wo.x - wi.x) * dy + (wo.y - wi.y) * dx));
       if (L.width == null) { el.style.display = ''; L.width = el.offsetWidth || 1; }
-      show = ribbonPx > 14 && arcPx > L.width * scale + 10;
+      show = along > L.width * scale + 8 && across > 12 * scale;
     } else if (L.callout) {
-      // push the readout outward along the screen-space radial, anchor its near corner
-      const c = toScreen(L.axis, w, h);
+      // push the readout outward across the strip, anchor its near corner
+      const c = toScreen(mixV(L.inner), w, h);
       let dx = p.x - c.x, dy = p.y - c.y; const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
       ox = dx * 22; oy = dy * 22;
       tx = dx > 0.35 ? 0 : dx < -0.35 ? -100 : -50;
@@ -431,34 +578,11 @@ function updateOverlay() {
 }
 
 // ---------------------------------------------------------------- camera
-// Base pose: orbit around the origin (the s = 0 point's plane) by tilt/spin at distance d.
-// With followTime, the pose is scaled about the cone apex by the similarity factor between
-// turn 0 and the current turn. Because the cone maps onto itself under that scaling, the
-// "now" marker projects to the same screen position at every hour of every day. In log mode
-// the whole ribbon does too; in linear mode only the marker is exact.
 function updateCamera() {
-  const t  = THREE.MathUtils.degToRad(P.tilt);
-  const sp = THREE.MathUtils.degToRad(P.spin);
-  const d  = 17 / P.zoom;
-  const Z  = new THREE.Vector3(0, 0, 1);
-  const pos = new THREE.Vector3(0, -d * Math.sin(t), d * Math.cos(t)).applyAxisAngle(Z, sp);
-  const up  = new THREE.Vector3(0,  Math.cos(t), Math.sin(t)).applyAxisAngle(Z, sp);
-  const target = new THREE.Vector3(0, 0, 0);
-
-  if (P.followTime) {
-    const F = frame(), s = nowDay();
-    if (F.apex) {
-      const k = F.scaleAt(s);
-      pos.sub(F.apex).multiplyScalar(k).add(F.apex);
-      target.sub(F.apex).multiplyScalar(k).add(F.apex);
-    } else {                                        // cylinder: the marker just climbs
-      const dz = F.dir * F.D * s;
-      pos.z += dz; target.z += dz;
-    }
-  }
-  camera.position.copy(pos);
-  camera.up.copy(up);
-  camera.lookAt(target);
+  const a = LAY[view.from].camera(), b = LAY[view.to].camera(), k = mixK();
+  camera.position.copy(a.pos).lerp(b.pos, k);
+  camera.up.copy(a.up).lerp(b.up, k).normalize();
+  camera.lookAt(a.target.lerp(b.target, k));
 }
 
 function resize() {
@@ -477,18 +601,26 @@ canvas.addEventListener('pointermove', e => {
   P.spin = (P.spin - (e.clientX - drag.x) * 0.3) % 360;
   P.tilt = THREE.MathUtils.clamp(P.tilt + (e.clientY - drag.y) * 0.25, 0, 80);
   drag = { x: e.clientX, y: e.clientY };
+  view.anim = false;                       // a manual tilt overrides the transition's tilt tween
   updateCamera(); refreshGui();
 });
 canvas.addEventListener('pointerup', () => drag = null);
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
-  P.zoom = THREE.MathUtils.clamp(P.zoom * Math.exp(-e.deltaY * 0.001), 0.4, 4);
+  P.zoom = THREE.MathUtils.clamp(P.zoom * Math.exp(-e.deltaY * 0.001), 0.2, 4);
   updateCamera(); refreshGui();
 }, { passive: false });
 
 // ---------------------------------------------------------------- gui
 const rebuild = () => { build(); updateCamera(); };
 const gui = new GUI({ title: 'spiral' });
+const gView = gui.addFolder('view');
+gView.add(P, 'view', ['spiral', 'coil', 'linear', 'week']).onChange(n => { setView(n); rebuild(); });
+gView.add(P, 'morph', 0, 1, 0.001).name('transition').onChange(() => { view.anim = false; applyMorph(); updateCamera(); });
+gView.add(P, 'tilt', 0, 80, 1).name('tilt °').onChange(updateCamera);
+gView.add(P, 'spin', -180, 180, 1).name('spin °').onChange(updateCamera);
+gView.add(P, 'zoom', 0.2, 4, 0.01).onChange(updateCamera);
+gView.add(P, 'followTime').name('follow time').onChange(updateCamera);
 const gShape = gui.addFolder('shape');
 gShape.add(P, 'flow', ['inward', 'outward']).onChange(rebuild);
 gShape.add(P, 'growth', ['log', 'linear']).onChange(rebuild);
@@ -496,13 +628,9 @@ gShape.add(P, 'coneAngle', 0, 90, 1).name('cone angle °').onChange(rebuild);
 gShape.add(P, 'turnSpacing', 0.3, 2.5, 0.05).name('turn spacing').onChange(rebuild);
 gShape.add(P, 'ribbonFill', 0.3, 1, 0.01).name('ribbon fill').onChange(rebuild);
 gShape.add(P, 'baseRadius', 2, 10, 0.1).name('base radius').onChange(rebuild);
+gShape.add(P, 'coilPitch', 0.1, 2, 0.05).name('coil pitch').onChange(rebuild);
 gShape.add(P, 'daysPast', 0, 10, 1).name('days past').onChange(rebuild);
-gShape.add(P, 'daysFuture', 0, 4, 1).name('days future').onChange(rebuild);
-const gView = gui.addFolder('view');
-gView.add(P, 'tilt', 0, 80, 1).name('tilt °').onChange(updateCamera);
-gView.add(P, 'spin', -180, 180, 1).name('spin °').onChange(updateCamera);
-gView.add(P, 'zoom', 0.4, 4, 0.01).onChange(updateCamera);
-gView.add(P, 'followTime').name('follow time').onChange(updateCamera);
+gShape.add(P, 'daysFuture', 0, 6, 1).name('days future').onChange(rebuild);
 const gTime = gui.addFolder('time & layers');
 const nowCtrl = gTime.add(P, 'nowHour', -24, 72, 0.05).name('now (h)').onChange(rebuild);
 gTime.add(P, 'play');
@@ -514,22 +642,31 @@ gTime.add(P, 'hourBands').name('hour bands').onChange(build);
 gTime.add(P, 'labels').name('labels').onChange(build);
 gTime.add(P, 'taskLabels').name('task labels').onChange(build);
 gTime.add(P, 'labelDays', 0.25, 4, 0.25).name('label range (d)').onChange(build);
-gui.add({ topDown() { P.tilt = 0; P.spin = 0; updateCamera(); refreshGui(); } }, 'topDown').name('↓ top-down (2D view)');
+gui.add({ topDown() { P.tilt = 0; P.spin = 0; view.anim = false; updateCamera(); refreshGui(); } }, 'topDown').name('↓ top-down (2D view)');
 function refreshGui() { gui.controllersRecursive().forEach(c => c.updateDisplay()); }
 
 // ---------------------------------------------------------------- go
 resize();
 rebuild();
+const TRANSITION_S = 0.9;
 let last = performance.now();
 renderer.setAnimationLoop(t => {
-  const dt = (t - last) / 1000; last = t;
-  if (P.play) { P.nowHour += P.speed * dt; rebuild(); nowCtrl.updateDisplay(); }
+  const dt = Math.min((t - last) / 1000, 0.1); last = t;
+  if (P.play) { P.nowHour += P.speed * dt; nowCtrl.updateDisplay(); }
+  if (view.anim) {
+    P.morph = Math.min(1, P.morph + dt / TRANSITION_S);
+    P.tilt = THREE.MathUtils.lerp(view.tiltFrom, view.tiltTo, mixK());
+    if (P.morph >= 1) view.anim = false;
+    refreshGui();
+  }
+  if (P.play) rebuild();
+  else if (view.anim) { applyMorph(); updateCamera(); }
   renderer.render(scene, camera);
   updateOverlay();
-  if (location.search.includes('debug')) {
+  if (query.has('debug')) {
     const i = renderer.info.render;
     document.getElementById('hint').textContent =
-      `gl ${renderer.getContext().getParameter(renderer.getContext().RENDERER)} · calls ${i.calls} · tris ${i.triangles} · lines ${i.lines}`;
+      `gl ${renderer.getContext().getParameter(renderer.getContext().RENDERER)} · calls ${i.calls} · tris ${i.triangles} · lines ${i.lines} · view ${view.from}→${view.to} k=${P.morph.toFixed(2)}`;
   }
 });
 </script>
