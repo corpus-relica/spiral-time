@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>spiral-time</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e0f13; color: #c9c9d0;
+               font: 13px system-ui, sans-serif; overflow: hidden; }
+  #c { display: block; width: 100%; height: 100%; }
+  #hint { position: fixed; left: 14px; bottom: 12px; opacity: .5;
+          pointer-events: none; letter-spacing: .04em; }
+  #brand { position: fixed; left: 16px; top: 12px; font: 600 15px Georgia, serif;
+           letter-spacing: .02em; color: #d9a441; opacity: .85; pointer-events: none; }
+  #clock { position: fixed; left: 16px; top: 36px; font: 300 22px system-ui, sans-serif;
+           letter-spacing: .06em; color: #c9c9d0; opacity: .8; pointer-events: none;
+           font-variant-numeric: tabular-nums; }
+  .lil-gui { --background-color: #15161c; --widget-color: #22232b; --hover-color: #2b2c36;
+             --focus-color: #33343f; --text-color: #c9c9d0; --title-background-color: #101116;
+             --number-color: #e2b04a; --string-color: #8fd3c9; --font-size: 11px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="brand">spiral-time</div>
+<div id="clock"></div>
+<div id="hint">drag: tilt / spin &nbsp;·&nbsp; wheel: zoom &nbsp;·&nbsp; midnight at top, clockwise · future spirals inward, past falls off the edge</div>
+
+<script>
+addEventListener('error', e => { document.getElementById('hint').textContent = 'error: ' + e.message; });
+</script>
+<script type="module">
+import * as THREE from 'three';
+import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
+// ---------------------------------------------------------------- parameters
+const now = new Date();
+const P = {
+  flow:        'inward',  // 'inward': future spirals toward the centre, past falls off the outer edge.
+                          // 'outward': the reverse, past descends into the well.
+  growth:      'log',  // 'linear': turns equally spaced. 'log': each turn is a fixed multiple
+                       // of the previous one, so the spiral is self-similar under scaling.
+  coneAngle:   35,     // 0 = flat spiral in the screen plane, 90 = cylinder wall
+  turnSpacing: 1.0,    // distance between turn 0 and turn 1, measured along the cone surface
+  ribbonFill:  0.85,   // ribbon width as a fraction of the local turn spacing (1 = touching)
+  baseRadius:  6,      // radius of the ribbon centreline at s = 0 (today's midnight)
+  daysPast:    2,
+  daysFuture:  3,
+  tilt:        30,     // camera tilt in degrees, 0 = straight down (the 2D view)
+  spin:        0,
+  zoom:        1,
+  followTime:  true,   // scale the camera about the cone apex so the "now" marker stays put on screen
+  nowHour:     now.getHours() + now.getMinutes() / 60,   // continuous, never wraps
+  play:        false,
+  speed:       2,      // hours per second while playing
+  showTasks:   true,
+  showTicks:   true,
+  showEdges:   true,
+  hourBands:   true,
+};
+
+// ---------------------------------------------------------------- helpers
+const BG = new THREE.Color('#0e0f13');
+const BASE = new THREE.Color('#2b2e3a');
+const nowDay = () => P.nowHour / 24;
+
+// Cone frame. Everything lives on the surface of a cone whose generatrix through
+// (r = baseRadius, z = 0) makes angle `a` with the horizontal. rho = distance from the
+// apex along the generatrix. The helix is rho(s), and the ribbon is offset across rho.
+// dir = +1 when time flows outward (rho grows with s), -1 when it flows inward.
+function frame() {
+  const aDeg = P.growth === 'log' ? Math.min(P.coneAngle, 85) : P.coneAngle;
+  const a  = THREE.MathUtils.degToRad(aDeg);
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const D  = P.turnSpacing;
+  const dir = P.flow === 'inward' ? -1 : 1;
+  const F  = { a, ca, sa, D, dir };
+  if (P.growth === 'log') {
+    F.rho0 = P.baseRadius / ca;                     // rho at s = 0
+    F.g    = 1 + D / F.rho0;                        // ratio between successive turns
+    F.apex = new THREE.Vector3(0, 0, -P.baseRadius * sa / ca);
+    F.rho  = s => F.rho0 * Math.pow(F.g, dir * s);
+    // ribbon edges sit at rho * g^(±fill/2): symmetric in log space, so fill = 1 tiles exactly
+    F.rhoAt = (s, v) => F.rho(s) * Math.pow(F.g, v * P.ribbonFill);
+    F.scaleAt = s => Math.pow(F.g, dir * s);        // similarity factor between turn 0 and turn s
+  } else {
+    F.rho0 = ca > 0.02 ? P.baseRadius / ca : Infinity;
+    F.apex = ca > 0.02 ? new THREE.Vector3(0, 0, -P.baseRadius * sa / ca) : null;
+    F.rho  = s => F.rho0 + dir * D * s;
+    F.rhoAt = (s, v) => F.rho(s) + v * P.ribbonFill * D;
+    F.scaleAt = s => ca > 0.02 ? F.rho(s) / F.rho0 : 1;
+  }
+  return F;
+}
+
+// s = time in days (fractional part = time of day, 0 = today's midnight)
+// v = position across the ribbon, -0.5 (inner/lower edge) .. 0.5 (outer/upper edge)
+// lift = offset along the surface normal (up and inward), for lines drawn on top
+function place(s, v, lift = 0, F = frame()) {
+  let r, z;
+  if (F.apex) {
+    const rho = F.rhoAt(s, v);
+    r = rho * F.ca;
+    z = F.apex.z + rho * F.sa;
+  } else {                                          // cylinder wall: rho is meaningless
+    const w = P.ribbonFill * F.D;
+    r = P.baseRadius;
+    z = F.dir * F.D * s + v * w;
+  }
+  const th = Math.PI / 2 - 2 * Math.PI * s;         // midnight at top, clockwise
+  const c = Math.cos(th), sn = Math.sin(th);
+  return new THREE.Vector3((r - lift * F.sa) * c, (r - lift * F.sa) * sn, z + lift * F.ca);
+}
+
+// visible range of s, clamped in linear mode so the inner edge never crosses the axis
+function sRange(F) {
+  let sMin = nowDay() - P.daysPast, sMax = nowDay() + P.daysFuture;
+  if (P.growth === 'linear' && F.apex) {
+    // inner edge: rhoAt(s, -0.5) * ca > 0.3
+    // turns until the ribbon would reach the axis, in whichever direction rho shrinks
+    const sLimit = (F.rho0 - 0.5 * P.ribbonFill * F.D - 0.3 / F.ca) / F.D;
+    if (F.dir > 0) sMin = Math.max(sMin, -sLimit); else sMax = Math.min(sMax, sLimit);
+  }
+  return [sMin, sMax];
+}
+
+// shading relative to now: the past fades toward the background as it leaves,
+// the future darkens the further off it is
+function shade(color, s) {
+  const c = color.clone(), d = s - nowDay();
+  if (d < 0) {
+    const k = THREE.MathUtils.clamp(-d / Math.max(P.daysPast, 1), 0, 1);
+    c.lerp(BG, 0.15 + 0.65 * k);
+  } else {
+    const k = THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1);
+    c.multiplyScalar(THREE.MathUtils.lerp(1, 0.3, k));
+  }
+  return c;
+}
+
+// ---------------------------------------------------------------- sample data
+// absolute hours relative to today's midnight; repeated per day with a weekday rhythm
+function sampleTasks(sMin, sMax) {
+  const tasks = [];
+  for (let d = Math.floor(sMin) - 1; d <= Math.ceil(sMax); d++) {
+    const b = d * 24, wk = ((d % 7) + 7) % 7;
+    tasks.push({ s: b + 23, e: b + 31, c: '#514a80' });           // sleep, crosses midnight
+    if (wk === 2 || wk === 5) {
+      tasks.push({ s: b + 10, e: b + 14, c: '#3c7a72' });
+    } else {
+      tasks.push({ s: b + 9,    e: b + 12.5, c: '#2f8f85' });     // focus
+      tasks.push({ s: b + 13.5, e: b + 17,   c: '#3d6e9c' });     // work
+    }
+    tasks.push({ s: b + 7.25, e: b + 8,  c: '#7a8a3a' });         // routine
+    tasks.push({ s: b + 18,   e: b + 19, c: '#b0743a' });         // gym
+    tasks.push({ s: b + 20.5, e: b + 22, c: '#6a4f5f' });         // evening
+  }
+  return tasks;
+}
+
+function colorAt(s, tasks) {
+  const h = s * 24;
+  let c = BASE.clone();
+  if (P.showTasks) {
+    for (const t of tasks) if (h >= t.s && h < t.e) { c = new THREE.Color(t.c); break; }
+  }
+  if (P.hourBands && ((Math.floor(h) % 2) + 2) % 2 === 0) c.multiplyScalar(1.09);
+  return shade(c, s);
+}
+
+// ---------------------------------------------------------------- scene
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.background = BG;
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 400);
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+camera.add(keyLight);
+keyLight.position.set(3, 4, 2);
+scene.add(camera);
+scene.add(new THREE.HemisphereLight(0x8a90b0, 0x141216, 0.9));
+
+const root = new THREE.Group();
+scene.add(root);
+
+const ribbonMat = new THREE.MeshStandardMaterial({
+  vertexColors: true, side: THREE.DoubleSide, roughness: 0.75, metalness: 0.05,
+});
+const edgeMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55 });
+const tickMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7 });
+const nowMat  = new THREE.LineBasicMaterial({ color: '#f39a2b' });
+const postMat = new THREE.LineBasicMaterial({ color: '#f39a2b', transparent: true, opacity: 0.18 });
+const dotMat  = new THREE.MeshBasicMaterial({ color: '#f39a2b' });
+const axisMat = new THREE.MeshBasicMaterial({ color: '#3a3d4a' });
+
+function clearRoot() {
+  for (const o of [...root.children]) { root.remove(o); o.geometry?.dispose(); }
+}
+
+function build() {
+  clearRoot();
+  const F = frame();
+  const [sMin, sMax] = sRange(F);
+  const stepsPerDay = 24 * 10;
+  const n = Math.max(2, Math.round((sMax - sMin) * stepsPerDay));
+  const tasks = sampleTasks(sMin, sMax);
+
+  // --- ribbon surface
+  const pos = [], col = [], idx = [];
+  const edgeIn = [], edgeOut = [], edgeCol = [];
+  for (let i = 0; i <= n; i++) {
+    const s = sMin + (sMax - sMin) * i / n;
+    const c = colorAt(s, tasks);
+    const pi = place(s, -0.5, 0, F), po = place(s, 0.5, 0, F);
+    pos.push(pi.x, pi.y, pi.z, po.x, po.y, po.z);
+    col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    if (i < n) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+    const ec = c.clone().multiplyScalar(1.6).lerp(new THREE.Color('#ffffff'), 0.15);
+    const li = place(s, -0.5, 0.01, F), lo = place(s, 0.5, 0.01, F);
+    edgeIn.push(li.x, li.y, li.z); edgeOut.push(lo.x, lo.y, lo.z);
+    edgeCol.push(ec.r, ec.g, ec.b);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  root.add(new THREE.Mesh(g, ribbonMat));
+
+  // --- edges
+  if (P.showEdges) {
+    for (const arr of [edgeIn, edgeOut]) {
+      const lg = new THREE.BufferGeometry();
+      lg.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      lg.setAttribute('color', new THREE.Float32BufferAttribute(edgeCol, 3));
+      root.add(new THREE.Line(lg, edgeMat));
+    }
+  }
+
+  // --- hour ticks
+  if (P.showTicks) {
+    const tp = [], tc = [];
+    const h0 = Math.ceil(sMin * 24), h1 = Math.floor(sMax * 24);
+    for (let h = h0; h <= h1; h++) {
+      const s = h / 24, hod = ((h % 24) + 24) % 24;
+      const major = hod % 6 === 0, mid = hod % 3 === 0;
+      const v0 = major ? -0.5 : mid ? 0.2 : 0.35;
+      const a = place(s, v0, 0.02, F), b = place(s, 0.5, 0.02, F);
+      const c = shade(new THREE.Color(major ? '#c9cbd6' : '#8d90a0'), s);
+      tp.push(a.x, a.y, a.z, b.x, b.y, b.z);
+      tc.push(c.r, c.g, c.b, c.r, c.g, c.b);
+    }
+    const tg = new THREE.BufferGeometry();
+    tg.setAttribute('position', new THREE.Float32BufferAttribute(tp, 3));
+    tg.setAttribute('color', new THREE.Float32BufferAttribute(tc, 3));
+    root.add(new THREE.LineSegments(tg, tickMat));
+  }
+
+  // --- "now" marker
+  const sNow = nowDay();
+  const a = place(sNow, -0.5, 0.03, F), b = place(sNow, 0.62, 0.03, F);
+  root.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), nowMat));
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.07 * F.scaleAt(sNow), 16, 12), dotMat);
+  dot.position.copy(place(sNow, 0.5, 0.03, F));
+  root.add(dot);
+  // faint spoke from the marker to the axis, to read depth
+  root.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([b, new THREE.Vector3(0, 0, b.z)]), postMat));
+
+  // --- axis dot at the marker's height, for orientation
+  const centre = new THREE.Mesh(new THREE.SphereGeometry(0.05 * F.scaleAt(sNow), 12, 8), axisMat);
+  centre.position.set(0, 0, b.z);
+  root.add(centre);
+}
+
+// ---------------------------------------------------------------- camera
+// Base pose: orbit around the origin (the s = 0 point's plane) by tilt/spin at distance d.
+// With followTime, the pose is scaled about the cone apex by the similarity factor between
+// turn 0 and the current turn. Because the cone maps onto itself under that scaling, the
+// "now" marker projects to the same screen position at every hour of every day. In log mode
+// the whole ribbon does too; in linear mode only the marker is exact.
+function updateCamera() {
+  const t  = THREE.MathUtils.degToRad(P.tilt);
+  const sp = THREE.MathUtils.degToRad(P.spin);
+  const d  = 17 / P.zoom;
+  const Z  = new THREE.Vector3(0, 0, 1);
+  const pos = new THREE.Vector3(0, -d * Math.sin(t), d * Math.cos(t)).applyAxisAngle(Z, sp);
+  const up  = new THREE.Vector3(0,  Math.cos(t), Math.sin(t)).applyAxisAngle(Z, sp);
+  const target = new THREE.Vector3(0, 0, 0);
+
+  if (P.followTime) {
+    const F = frame(), s = nowDay();
+    if (F.apex) {
+      const k = F.scaleAt(s);
+      pos.sub(F.apex).multiplyScalar(k).add(F.apex);
+      target.sub(F.apex).multiplyScalar(k).add(F.apex);
+    } else {                                        // cylinder: the marker just climbs
+      const dz = F.dir * F.D * s;
+      pos.z += dz; target.z += dz;
+    }
+  }
+  camera.position.copy(pos);
+  camera.up.copy(up);
+  camera.lookAt(target);
+}
+
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+// ---------------------------------------------------------------- interaction
+let drag = null;
+canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  P.spin = (P.spin - (e.clientX - drag.x) * 0.3) % 360;
+  P.tilt = THREE.MathUtils.clamp(P.tilt + (e.clientY - drag.y) * 0.25, 0, 80);
+  drag = { x: e.clientX, y: e.clientY };
+  updateCamera(); refreshGui();
+});
+canvas.addEventListener('pointerup', () => drag = null);
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  P.zoom = THREE.MathUtils.clamp(P.zoom * Math.exp(-e.deltaY * 0.001), 0.4, 4);
+  updateCamera(); refreshGui();
+}, { passive: false });
+
+// ---------------------------------------------------------------- gui
+const rebuild = () => { build(); updateCamera(); };
+const gui = new GUI({ title: 'spiral' });
+const gShape = gui.addFolder('shape');
+gShape.add(P, 'flow', ['inward', 'outward']).onChange(rebuild);
+gShape.add(P, 'growth', ['log', 'linear']).onChange(rebuild);
+gShape.add(P, 'coneAngle', 0, 90, 1).name('cone angle °').onChange(rebuild);
+gShape.add(P, 'turnSpacing', 0.3, 2.5, 0.05).name('turn spacing').onChange(rebuild);
+gShape.add(P, 'ribbonFill', 0.3, 1, 0.01).name('ribbon fill').onChange(rebuild);
+gShape.add(P, 'baseRadius', 2, 10, 0.1).name('base radius').onChange(rebuild);
+gShape.add(P, 'daysPast', 0, 10, 1).name('days past').onChange(rebuild);
+gShape.add(P, 'daysFuture', 0, 4, 1).name('days future').onChange(rebuild);
+const gView = gui.addFolder('view');
+gView.add(P, 'tilt', 0, 80, 1).name('tilt °').onChange(updateCamera);
+gView.add(P, 'spin', -180, 180, 1).name('spin °').onChange(updateCamera);
+gView.add(P, 'zoom', 0.4, 4, 0.01).onChange(updateCamera);
+gView.add(P, 'followTime').name('follow time').onChange(updateCamera);
+const gTime = gui.addFolder('time & layers');
+const nowCtrl = gTime.add(P, 'nowHour', -24, 72, 0.05).name('now (h)').onChange(rebuild);
+gTime.add(P, 'play');
+gTime.add(P, 'speed', 0.1, 24, 0.1).name('speed (h/s)');
+gTime.add(P, 'showTasks').name('tasks').onChange(build);
+gTime.add(P, 'showTicks').name('hour ticks').onChange(build);
+gTime.add(P, 'showEdges').name('edges').onChange(build);
+gTime.add(P, 'hourBands').name('hour bands').onChange(build);
+gui.add({ topDown() { P.tilt = 0; P.spin = 0; updateCamera(); refreshGui(); } }, 'topDown').name('↓ top-down (2D view)');
+function refreshGui() { gui.controllersRecursive().forEach(c => c.updateDisplay()); }
+
+// ---------------------------------------------------------------- go
+const clockEl = document.getElementById('clock');
+function updateClock() {
+  const h = ((P.nowHour % 24) + 24) % 24;
+  const day = Math.floor(P.nowHour / 24);
+  const hh = String(Math.floor(h)).padStart(2, '0'), mm = String(Math.floor((h % 1) * 60)).padStart(2, '0');
+  clockEl.textContent = `${hh}:${mm}` + (day ? `  ${day > 0 ? '+' : ''}${day}d` : '');
+}
+
+resize();
+rebuild();
+let last = performance.now();
+renderer.setAnimationLoop(t => {
+  const dt = (t - last) / 1000; last = t;
+  if (P.play) { P.nowHour += P.speed * dt; rebuild(); nowCtrl.updateDisplay(); }
+  updateClock();
+  renderer.render(scene, camera);
+  if (location.search.includes('debug')) {
+    const i = renderer.info.render;
+    document.getElementById('hint').textContent =
+      `gl ${renderer.getContext().getParameter(renderer.getContext().RENDERER)} · calls ${i.calls} · tris ${i.triangles} · lines ${i.lines}`;
+  }
+});
+</script>
+</body>
+</html>
