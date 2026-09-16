@@ -8,13 +8,21 @@
   html, body { margin: 0; height: 100%; background: #0e0f13; color: #c9c9d0;
                font: 13px system-ui, sans-serif; overflow: hidden; }
   #c { display: block; width: 100%; height: 100%; }
+  #overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform;
+         font-variant-numeric: tabular-nums; }
+  .lbl.hour { font: 500 11px system-ui, sans-serif; letter-spacing: .14em; color: #8e92a3; }
+  .lbl.day  { font: 500 10px system-ui, sans-serif; letter-spacing: .18em; color: #c9c9d0;
+              text-transform: uppercase; }
+  .lbl.task { font: 400 12px system-ui, sans-serif; color: #e8e8ee; text-shadow: 0 0 5px #000, 0 0 2px #000; }
+  .lbl.now  { padding: 2px 0; color: #e8e8ee; line-height: 1.35; }
+  .lbl.now .t  { font: 300 22px system-ui, sans-serif; letter-spacing: .05em; }
+  .lbl.now .n  { font: 400 13px system-ui, sans-serif; }
+  .lbl.now .u  { font: 400 11px system-ui, sans-serif; color: #8e92a3; letter-spacing: .04em; }
   #hint { position: fixed; left: 14px; bottom: 12px; opacity: .5;
           pointer-events: none; letter-spacing: .04em; }
   #brand { position: fixed; left: 16px; top: 12px; font: 600 15px Georgia, serif;
            letter-spacing: .02em; color: #d9a441; opacity: .85; pointer-events: none; }
-  #clock { position: fixed; left: 16px; top: 36px; font: 300 22px system-ui, sans-serif;
-           letter-spacing: .06em; color: #c9c9d0; opacity: .8; pointer-events: none;
-           font-variant-numeric: tabular-nums; }
   .lil-gui { --background-color: #15161c; --widget-color: #22232b; --hover-color: #2b2c36;
              --focus-color: #33343f; --text-color: #c9c9d0; --title-background-color: #101116;
              --number-color: #e2b04a; --string-color: #8fd3c9; --font-size: 11px; }
@@ -29,7 +37,7 @@
 <body>
 <canvas id="c"></canvas>
 <div id="brand">spiral-time</div>
-<div id="clock"></div>
+<div id="overlay"></div>
 <div id="hint">drag: tilt / spin &nbsp;·&nbsp; wheel: zoom &nbsp;·&nbsp; midnight at top, clockwise · future spirals inward, past falls off the edge</div>
 
 <script>
@@ -63,6 +71,9 @@ const P = {
   showTicks:   true,
   showEdges:   true,
   hourBands:   true,
+  labels:      true,   // hour / day labels and the now readout, as a screen-space overlay
+  taskLabels:  true,   // task names riding on the ribbon
+  labelDays:   1,      // task names only within this many days of now
 };
 
 // ---------------------------------------------------------------- helpers
@@ -144,22 +155,29 @@ function shade(color, s) {
   return c;
 }
 
+// overlay opacity, same falloff as the surface shading
+function labelAlpha(s) {
+  const d = s - nowDay();
+  if (d < 0) return THREE.MathUtils.lerp(0.85, 0.12, THREE.MathUtils.clamp(-d / Math.max(P.daysPast, 1), 0, 1));
+  return THREE.MathUtils.lerp(0.85, 0.3, THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1));
+}
+
 // ---------------------------------------------------------------- sample data
 // absolute hours relative to today's midnight; repeated per day with a weekday rhythm
 function sampleTasks(sMin, sMax) {
   const tasks = [];
   for (let d = Math.floor(sMin) - 1; d <= Math.ceil(sMax); d++) {
     const b = d * 24, wk = ((d % 7) + 7) % 7;
-    tasks.push({ s: b + 23, e: b + 31, c: '#514a80' });           // sleep, crosses midnight
+    tasks.push({ s: b + 23, e: b + 31, c: '#514a80', n: 'Sleep' });           // sleep, crosses midnight
     if (wk === 2 || wk === 5) {
-      tasks.push({ s: b + 10, e: b + 14, c: '#3c7a72' });
+      tasks.push({ s: b + 10, e: b + 14, c: '#3c7a72', n: 'Design review' });
     } else {
-      tasks.push({ s: b + 9,    e: b + 12.5, c: '#2f8f85' });     // focus
-      tasks.push({ s: b + 13.5, e: b + 17,   c: '#3d6e9c' });     // work
+      tasks.push({ s: b + 9,    e: b + 12.5, c: '#2f8f85', n: 'Write API documentation' });     // focus
+      tasks.push({ s: b + 13.5, e: b + 17,   c: '#3d6e9c', n: 'Billing integration' });     // work
     }
-    tasks.push({ s: b + 7.25, e: b + 8,  c: '#7a8a3a' });         // routine
-    tasks.push({ s: b + 18,   e: b + 19, c: '#b0743a' });         // gym
-    tasks.push({ s: b + 20.5, e: b + 22, c: '#6a4f5f' });         // evening
+    tasks.push({ s: b + 7.25, e: b + 8,  c: '#7a8a3a', n: 'Morning routine' });         // routine
+    tasks.push({ s: b + 18,   e: b + 19, c: '#b0743a', n: 'Gym' });         // gym
+    tasks.push({ s: b + 20.5, e: b + 22, c: '#6a4f5f', n: 'Reading' });         // evening
   }
   return tasks;
 }
@@ -280,6 +298,136 @@ function build() {
   const centre = new THREE.Mesh(new THREE.SphereGeometry(0.05 * F.scaleAt(sNow), 12, 8), axisMat);
   centre.position.set(0, 0, b.z);
   root.add(centre);
+
+  buildLabels(F, sMin, sMax, tasks);
+}
+
+// ---------------------------------------------------------------- overlay labels
+// Each label has a 3D anchor on the ribbon and is positioned in screen space every frame.
+// Elements are keyed and reused so that rebuilding while time plays does not churn the DOM.
+const overlay = document.getElementById('overlay');
+const labelPool = new Map();     // key -> { el, ...spec }
+let labels = [];
+
+function fmtHour(h) {
+  const hod = ((h % 24) + 24) % 24;
+  const ap = hod < 12 ? 'AM' : 'PM', h12 = hod % 12 === 0 ? 12 : hod % 12;
+  return `${h12} ${ap}`;
+}
+function fmtClock(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  return `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.floor((h % 1) * 60)).padStart(2, '0')}`;
+}
+function fmtDuration(hours) {
+  const m = Math.round(hours * 60), h = Math.floor(m / 60), mm = m % 60;
+  return h ? (mm ? `${h}h ${mm}m` : `${h}h`) : `${mm}m`;
+}
+function dayLabel(d) {
+  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+  return t.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function label(key, kind, html, spec) {
+  let L = labelPool.get(key);
+  if (!L) {
+    const el = document.createElement('div');
+    el.className = 'lbl ' + kind;
+    overlay.appendChild(el);
+    L = { key, el, html: null };
+    labelPool.set(key, L);
+  }
+  if (L.html !== html) { L.el.innerHTML = html; L.html = html; L.width = null; }
+  Object.assign(L, spec, { kind, used: true });
+  labels.push(L);
+}
+
+function buildLabels(F, sMin, sMax, tasks) {
+  labels = [];
+  for (const L of labelPool.values()) L.used = false;
+  const sNow = nowDay();
+  const vGap = 0.5 / P.ribbonFill;   // middle of the gap between this turn and the next one out
+
+  if (P.labels) {
+    // hour labels: the occurrence of each hour nearest to now, every 3 hours; midnight is the day label
+    for (let hh = 3; hh < 24; hh += 3) {
+      const delta = ((hh / 24 - sNow) % 1 + 1.5) % 1 - 0.5;
+      const s = sNow + delta;
+      if (s < sMin || s > sMax) continue;
+      label('hour' + hh, 'hour', fmtHour(hh), { anchor: place(s, vGap, 0, F), s });
+    }
+    // day labels at every midnight in view, stacked up the top radial
+    for (let d = Math.ceil(sMin); d <= Math.floor(sMax); d++) {
+      label('day' + d, 'day', dayLabel(d), { anchor: place(d, vGap, 0, F), s: d });
+    }
+    // now readout, as a callout beside the marker
+    const cur = tasks.find(t => P.nowHour >= t.s && P.nowHour < t.e);
+    const html = `<div class="t">${fmtClock(P.nowHour)}</div>` + (cur
+      ? `<div class="n">${cur.n}</div><div class="u">until ${fmtClock(cur.e)} · ${fmtDuration(cur.e - P.nowHour)} left</div>`
+      : `<div class="u">free</div>`);
+    const m = place(sNow, 0.62, 0.03, F);
+    label('now', 'now', html, { anchor: m, axis: new THREE.Vector3(0, 0, m.z), s: sNow, callout: true });
+  }
+
+  if (P.taskLabels) {
+    for (const t of tasks) {
+      const a = Math.max(t.s, sMin * 24), b = Math.min(t.e, sMax * 24);
+      if (b - a < 0.25) continue;
+      const mid = (a + b) / 2 / 24;
+      if (Math.abs(mid - sNow) > P.labelDays) continue;
+      const pts = [];
+      for (let i = 0; i <= 8; i++) pts.push(place((a + (b - a) * i / 8) / 24, 0, 0.005, F));
+      label('task' + t.s, 'task', t.n, {
+        anchor: pts[4], s: mid,
+        tanA: pts[3], tanB: pts[5],          // same lift as the anchor, a quarter of the task apart
+        wIn: place(mid, -0.5, 0, F), wOut: place(mid, 0.5, 0, F), arc: pts,
+      });
+    }
+  }
+
+  for (const [key, L] of labelPool) if (!L.used) { L.el.remove(); labelPool.delete(key); }
+}
+
+const _v = new THREE.Vector3();
+function toScreen(p, w, h) {
+  _v.copy(p).project(camera);
+  return { x: (_v.x + 1) / 2 * w, y: (1 - _v.y) / 2 * h, behind: _v.z > 1 };
+}
+
+function updateOverlay() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  for (const L of labels) {
+    const p = toScreen(L.anchor, w, h);
+    const el = L.el;
+    if (p.behind || p.x < -200 || p.x > w + 200 || p.y < -100 || p.y > h + 100) { el.style.display = 'none'; continue; }
+    let rot = 0, tx = -50, ty = -50, ox = 0, oy = 0, scale = 1, show = true;
+
+    if (L.kind === 'task') {
+      // rotate along the ribbon's projected tangent, keep text reading left to right
+      const ta = toScreen(L.tanA, w, h), tb = toScreen(L.tanB, w, h);
+      rot = Math.atan2(tb.y - ta.y, tb.x - ta.x) * 180 / Math.PI;
+      if (rot > 90) rot -= 180; else if (rot < -90) rot += 180;
+      // size with the projected ribbon width, hide when the ribbon is too thin or the arc too short
+      const wi = toScreen(L.wIn, w, h), wo = toScreen(L.wOut, w, h);
+      const ribbonPx = Math.hypot(wo.x - wi.x, wo.y - wi.y);
+      scale = THREE.MathUtils.clamp(ribbonPx / 34, 0.6, 1.4);
+      let arcPx = 0, prev = null;
+      for (const a of L.arc) { const c = toScreen(a, w, h); if (prev) arcPx += Math.hypot(c.x - prev.x, c.y - prev.y); prev = c; }
+      if (L.width == null) { el.style.display = ''; L.width = el.offsetWidth || 1; }
+      show = ribbonPx > 14 && arcPx > L.width * scale + 10;
+    } else if (L.callout) {
+      // push the readout outward along the screen-space radial, anchor its near corner
+      const c = toScreen(L.axis, w, h);
+      let dx = p.x - c.x, dy = p.y - c.y; const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+      ox = dx * 22; oy = dy * 22;
+      tx = dx > 0.35 ? 0 : dx < -0.35 ? -100 : -50;
+      ty = dy > 0.35 ? 0 : dy < -0.35 ? -100 : -50;
+    }
+
+    el.style.display = show ? '' : 'none';
+    if (!show) continue;
+    el.style.opacity = L.callout ? 1 : labelAlpha(L.s).toFixed(3);
+    el.style.transform = `translate(${(p.x + ox).toFixed(1)}px, ${(p.y + oy).toFixed(1)}px) translate(${tx}%, ${ty}%) rotate(${rot.toFixed(1)}deg) scale(${scale.toFixed(3)})`;
+  }
 }
 
 // ---------------------------------------------------------------- camera
@@ -363,26 +511,21 @@ gTime.add(P, 'showTasks').name('tasks').onChange(build);
 gTime.add(P, 'showTicks').name('hour ticks').onChange(build);
 gTime.add(P, 'showEdges').name('edges').onChange(build);
 gTime.add(P, 'hourBands').name('hour bands').onChange(build);
+gTime.add(P, 'labels').name('labels').onChange(build);
+gTime.add(P, 'taskLabels').name('task labels').onChange(build);
+gTime.add(P, 'labelDays', 0.25, 4, 0.25).name('label range (d)').onChange(build);
 gui.add({ topDown() { P.tilt = 0; P.spin = 0; updateCamera(); refreshGui(); } }, 'topDown').name('↓ top-down (2D view)');
 function refreshGui() { gui.controllersRecursive().forEach(c => c.updateDisplay()); }
 
 // ---------------------------------------------------------------- go
-const clockEl = document.getElementById('clock');
-function updateClock() {
-  const h = ((P.nowHour % 24) + 24) % 24;
-  const day = Math.floor(P.nowHour / 24);
-  const hh = String(Math.floor(h)).padStart(2, '0'), mm = String(Math.floor((h % 1) * 60)).padStart(2, '0');
-  clockEl.textContent = `${hh}:${mm}` + (day ? `  ${day > 0 ? '+' : ''}${day}d` : '');
-}
-
 resize();
 rebuild();
 let last = performance.now();
 renderer.setAnimationLoop(t => {
   const dt = (t - last) / 1000; last = t;
   if (P.play) { P.nowHour += P.speed * dt; rebuild(); nowCtrl.updateDisplay(); }
-  updateClock();
   renderer.render(scene, camera);
+  updateOverlay();
   if (location.search.includes('debug')) {
     const i = renderer.info.render;
     document.getElementById('hint').textContent =
