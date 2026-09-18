@@ -69,7 +69,7 @@ const P = {
   turnSpacing: 1.0,    // distance between turn 0 and turn 1, measured along the cone surface
   ribbonFill:  0.85,   // ribbon width as a fraction of the local turn spacing (1 = touching)
   baseRadius:  6,      // radius of the ribbon centreline at s = 0 (today's midnight)
-  coilPitch:   0.75,   // coil view: how far each day's loop advances, in loop diameters
+  coilPitch:   0.8,    // coil view: how far each day's loop advances, in loop diameters
   daysPast:    2,
   daysFuture:  3,
   tilt:        30,     // camera tilt in degrees, 0 = straight down (the 2D view); set below per view
@@ -98,7 +98,7 @@ const BG = new THREE.Color('#0e0f13');
 const Z = new THREE.Vector3(0, 0, 1);
 const nowDay = () => P.nowHour / 24;
 const easeInOut = k => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-if (P.view === 'coil') P.tilt = 38; else if (P.view !== 'spiral') P.tilt = 0;
+if (P.view === 'coil') { P.tilt = 80; P.spin = -128.5; } else if (P.view !== 'spiral') P.tilt = 0;
 
 // ---------------------------------------------------------------- spiral geometry
 // Cone frame. The spiral lives on the surface of a cone whose generatrix through
@@ -199,21 +199,23 @@ function makeLayouts() {
     },
   };
 
-  // one loop per day at constant radius in the screen plane, the loop centre advancing
-  // along x: a slinky laid along the time axis. Every day is the same size.
+  // a true helix: one loop per day at constant radius, loops standing in the x-z plane,
+  // the axis along -y. With the default camera on the +y side the future emerges from the
+  // back right and the past comes forward and left before falling off the frame.
+  // The ribbon lies flat in the loop plane, like a slinky, and lifts toward the camera.
   const pitch = P.coilPitch * 2 * P.baseRadius;
   const coil = {
-    name: 'coil', upright: false, defaultTilt: 38, range: [sMin, sMax],
+    name: 'coil', upright: false, defaultTilt: 80, defaultSpin: -128.5, range: [sMin, sMax],
     place(s, v, lift = 0) {
-      const th = Math.PI / 2 - 2 * Math.PI * s, r = P.baseRadius + v * W;
-      return new THREE.Vector3(s * pitch + r * Math.cos(th), r * Math.sin(th), lift);
+      const ph = 2 * Math.PI * s, r = P.baseRadius + v * W;    // midnight at the top (+z), clockwise as seen from the camera
+      return new THREE.Vector3(r * Math.sin(ph), -s * pitch + lift, r * Math.cos(ph));
     },
     anchorDay(d) { return this.place(d, vGap); },
     anchorHour(s) { return this.place(s, vGap); },
-    spoke(s) { return new THREE.Vector3(s * pitch, 0, 0); },
+    spoke(s) { return new THREE.Vector3(0, -s * pitch, 0); },
     camera() {
-      const x = P.followTime ? sNow * pitch : 0;
-      return basePose(new THREE.Vector3(x, 0, 0), 17 / P.zoom * 1.2);
+      const y = P.followTime ? -sNow * pitch : 0;
+      return basePose(new THREE.Vector3(0, y, 0), 17 / P.zoom * 2.1);
     },
   };
 
@@ -248,7 +250,7 @@ function makeLayouts() {
 }
 
 // ---------------------------------------------------------------- view transition state
-const view = { from: P.view, to: P.view, anim: false, tiltFrom: P.tilt, tiltTo: P.tilt };
+const view = { from: P.view, to: P.view, anim: false, tiltFrom: P.tilt, tiltTo: P.tilt, spinFrom: P.spin, spinTo: P.spin };
 let LAY = null;                     // current layouts, rebuilt with the geometry
 const mixK = () => easeInOut(P.morph);
 
@@ -256,6 +258,7 @@ function setView(name) {
   if (!LAY[name]) return;
   view.from = view.to; view.to = name;
   view.tiltFrom = P.tilt; view.tiltTo = LAY[name].defaultTilt;
+  view.spinFrom = P.spin; view.spinTo = LAY[name].defaultSpin || 0;
   P.morph = 0; view.anim = true;
 }
 
@@ -505,11 +508,15 @@ const scene = new THREE.Scene();
 scene.background = BG;
 
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 400);
+// key light rides with the camera as a headlight, mostly along the view direction with a
+// little from above-left so faces that squarely face the viewer are the brightest. Both the
+// light and its target are parented to the camera, otherwise the light aims at the world origin.
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
-camera.add(keyLight);
-keyLight.position.set(3, 4, 2);
+keyLight.position.set(1, 1.4, 1);
+keyLight.target.position.set(0, 0, -3);
+camera.add(keyLight, keyLight.target);
 scene.add(camera);
-scene.add(new THREE.HemisphereLight(0x8a90b0, 0x141216, 0.9));
+scene.add(new THREE.HemisphereLight(0x8a90b0, 0x34323c, 1.1));
 
 const root = new THREE.Group();
 scene.add(root);
@@ -927,6 +934,7 @@ renderer.setAnimationLoop(t => {
   if (view.anim) {
     P.morph = Math.min(1, P.morph + dt / TRANSITION_S);
     P.tilt = THREE.MathUtils.lerp(view.tiltFrom, view.tiltTo, mixK());
+    P.spin = THREE.MathUtils.lerp(view.spinFrom, view.spinTo, mixK());
     if (P.morph >= 1) view.anim = false;
     refreshGui();
   }
