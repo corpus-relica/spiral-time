@@ -25,17 +25,26 @@
   #overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
   .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform;
          font-variant-numeric: tabular-nums; }
-  .lbl.hour { font: 500 11px system-ui, sans-serif; letter-spacing: .14em; color: #8e92a3; }
-  .lbl.day  { font: 500 10px system-ui, sans-serif; letter-spacing: .18em; color: #c9c9d0;
+  .lbl.hour { font: 500 12px system-ui, sans-serif; letter-spacing: .14em; color: #aeb2c2;
+              text-shadow: 0 0 3px #0e0f13, 0 0 6px #0e0f13, 0 0 10px #0e0f13; }
+  .lbl.day  { font: 600 11px system-ui, sans-serif; letter-spacing: .18em; color: #dcdee6;
+              text-shadow: 0 0 3px #0e0f13, 0 0 6px #0e0f13, 0 0 10px #0e0f13;
               text-transform: uppercase; }
-  .lbl.task { font: 400 12px system-ui, sans-serif; color: #e8e8ee; text-shadow: 0 0 5px #000, 0 0 2px #000; }
+  .lbl.task { font: 500 12px system-ui, sans-serif; color: #fff; letter-spacing: .01em;
+              text-shadow: 0 0 2px rgba(0,0,0,.95), 0 1px 3px rgba(0,0,0,.8); }
   .lbl.task.clip { overflow: hidden; text-overflow: ellipsis; }
-  .lbl.pt   { font: 500 10px system-ui, sans-serif; letter-spacing: .08em; text-shadow: 0 0 4px #000; }
+  .lbl.pt   { font: 600 11px system-ui, sans-serif; letter-spacing: .06em;
+              text-shadow: 0 0 3px #0e0f13, 0 0 6px #0e0f13, 0 0 10px #0e0f13; }
+  .lbl.icon { width: 16px; height: 16px; filter: drop-shadow(0 0 2px #0e0f13) drop-shadow(0 0 4px #0e0f13); }
+  .lbl.icon svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2;
+                  stroke-linecap: round; stroke-linejoin: round; }
   #tip { position: fixed; pointer-events: none; display: none; background: rgba(16,17,22,.92); border: 1px solid #2b2c36;
          border-radius: 6px; padding: 6px 9px; font-size: 12px; line-height: 1.4; color: #e8e8ee; max-width: 260px; z-index: 5; }
   #tip .h { color: #8e92a3; font-size: 11px; letter-spacing: .06em; }
   #tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
-  .lbl.now  { padding: 2px 0; color: #e8e8ee; line-height: 1.35; text-shadow: 0 0 6px #0e0f13, 0 0 2px #0e0f13; }
+  .lbl.now  { padding: 6px 11px 7px; color: #e8e8ee; line-height: 1.35; background: rgba(14,15,19,.78);
+              border: 1px solid rgba(255,255,255,.07); border-radius: 8px; backdrop-filter: blur(6px);
+              z-index: 2; }
   .lbl.now .t  { font: 300 22px system-ui, sans-serif; letter-spacing: .05em; }
   .lbl.now .n  { font: 400 13px system-ui, sans-serif; }
   .lbl.now .u  { font: 400 11px system-ui, sans-serif; color: #8e92a3; letter-spacing: .04em; }
@@ -100,7 +109,7 @@ const P = {
   growth:      'log',  // 'linear': turns equally spaced. 'log': each turn is a fixed multiple
                        // of the previous one, so the spiral is self-similar under scaling.
   coneAngle:   35,     // 0 = flat spiral in the screen plane, 90 = cylinder wall
-  turnSpacing: 1.0,    // distance between turn 0 and turn 1, measured along the cone surface
+  turnSpacing: 1.2,    // distance between turn 0 and turn 1, measured along the cone surface
   ribbonFill:  0.85,   // ribbon width as a fraction of the local turn spacing (1 = touching)
   baseRadius:  6,      // radius of the ribbon centreline at s = 0 (today's midnight)
   coilPitch:   0.8,    // coil view: how far each day's loop advances, in loop diameters
@@ -122,6 +131,7 @@ const P = {
   hourBands:   true,
   labels:      true,   // hour / day labels and the now readout, as a screen-space overlay
   taskLabels:  true,   // task names riding on the ribbon
+  icons:       true,   // sun, reminder and deadline icons as a screen-space overlay
   labelDays:   1,      // task names only within this many days of now
   pastDim:     0.45,   // how much the past is darkened, 0..1
   pastDesat:   0.7,    // how much the past is desaturated, 0..1
@@ -185,6 +195,9 @@ function sRange(F) {
 //   v    = lane across the strip, -0.5 (inner edge) .. 0.5 (outer edge)
 //   lift = offset along the surface normal, for lines drawn on top
 //   day  = which day segment s belongs to; only matters where the strip is cut at midnight
+// strip: the world-space [length, width] of one day of strip, which sizes the day textures.
+//   The flat and coil layouts widen the strip, which has more room there than on the spiral.
+// icon: on-screen size of the point icons in px
 // basePose: the camera orbit shared by all layouts, from tilt / spin / zoom around a target.
 // Distances are tuned for a landscape window; narrower ones back off so the width still fits.
 const FIT_ASPECT = 1.6;
@@ -205,7 +218,7 @@ function makeLayouts() {
   const vGap = 0.5 / P.ribbonFill;          // middle of the gap outside the strip
 
   const spiral = {
-    name: 'spiral', upright: false, defaultTilt: 0, F, range: [sMin, sMax],
+    name: 'spiral', upright: false, defaultTilt: 0, F, range: [sMin, sMax], strip: [L, W], icon: 15,
     place(s, v, lift = 0) {
       let r, z;
       if (F.apex) {
@@ -244,11 +257,11 @@ function makeLayouts() {
   // the axis along -y. With the default camera on the +y side the future emerges from the
   // back right and the past comes forward and left before falling off the frame.
   // The ribbon lies flat in the loop plane, like a slinky, and lifts toward the camera.
-  const pitch = P.coilPitch * 2 * P.baseRadius;
+  const pitch = P.coilPitch * 2 * P.baseRadius, Wc = W * 1.4;
   const coil = {
-    name: 'coil', upright: false, defaultTilt: 80, defaultSpin: -128.5, range: [sMin, sMax],
+    name: 'coil', upright: false, defaultTilt: 80, defaultSpin: -128.5, range: [sMin, sMax], strip: [L, Wc], icon: 16,
     place(s, v, lift = 0) {
-      const ph = 2 * Math.PI * s, r = P.baseRadius + v * W;    // midnight at the top (+z), clockwise as seen from the camera
+      const ph = 2 * Math.PI * s, r = P.baseRadius + v * Wc;    // midnight at the top (+z), clockwise as seen from the camera
       return new THREE.Vector3(r * Math.sin(ph), -s * pitch + lift, r * Math.cos(ph));
     },
     anchorDay(d) { return this.place(d, vGap); },
@@ -260,9 +273,10 @@ function makeLayouts() {
     },
   };
 
+  const Wl = W * 2.6;
   const linear = {
-    name: 'linear', upright: true, defaultTilt: 0, range: [sMin, sMax],
-    place(s, v, lift = 0) { return new THREE.Vector3(s * L, v * W, lift); },
+    name: 'linear', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [L, Wl], icon: 18,
+    place(s, v, lift = 0) { return new THREE.Vector3(s * L, v * Wl, lift); },
     anchorDay(d) { return this.place(d, vGap + 0.25); },
     anchorHour(s) { return this.place(s, vGap); },
     spoke() { return null; },
@@ -274,7 +288,7 @@ function makeLayouts() {
 
   const colW = 7, dayH = 18, i0 = Math.floor(sMin) - today, i1 = Math.floor(sMax) - today;
   const week = {
-    name: 'week', upright: true, defaultTilt: 0, range: [sMin, sMax],
+    name: 'week', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [dayH, 0.9 * colW], icon: 16,
     // one column per day, time running down, today at x = 0
     place(s, v, lift = 0, day = Math.floor(s)) {
       return new THREE.Vector3((day - today) * colW + v * 0.9 * colW, -(s - day) * dayH, lift);
@@ -349,7 +363,7 @@ function shade(color, s, withFade = true) {
     c.lerp(BG, 0.7 * k);
   } else {
     const k = THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1);
-    c.multiplyScalar(THREE.MathUtils.lerp(1, 0.3, k));
+    c.multiplyScalar(THREE.MathUtils.lerp(1, 0.55, k));
   }
   if (withFade) c.lerp(BG, 1 - fadeAt(s));      // lines fade by sinking into the background
   return c;
@@ -367,8 +381,18 @@ function labelAlpha(s) {
 //   series: { n, c, at(t) -> 0..1 }
 // Each day is drawn once into a Canvas 2D strip and used as that day's ribbon texture.
 // Bands across the strip, as fractions of the texture height measured from the outer edge:
-const BAND = { indicator: [0.03, 0.11], allday: [0.14, 0.22], event: [0.26, 0.73], series: [0.78, 0.96] };
-const TEX_W = 3072, TEX_H = 256;      // one day per texture: 128 texels per hour
+const BAND = { indicator: [0.03, 0.11], allday: [0.14, 0.22], event: [0.26, 0.73], series: [0.78, 0.93], context: [0.955, 1] };
+// Day textures are sized so a texel is square on the current layout's strip: circles stay round
+// and line widths even whatever the layout's proportions. They are repainted when a view
+// change alters those proportions (into or out of the week view).
+const TEX_TEXELS = 1.2e6;
+let tex = null;                       // { w, h, key }
+function texSpecFor(layout) {
+  const [L, W] = layout.strip;
+  const w = Math.min(renderer.capabilities.maxTextureSize, 8192, Math.round(Math.sqrt(TEX_TEXELS * L / W)));
+  const h = Math.max(32, Math.round(w * W / L));
+  return { w, h, key: w + 'x' + h };
+}
 const WHITE = new THREE.Color(1, 1, 1);
 
 function withAlpha(hex, a) {
@@ -446,7 +470,7 @@ function sampleContent(dayMin, dayMax) {
     if (!free) {
       const r = rngFor(k, 'work');
       const office = chance(r, 0.7), ws = between(r, 8.5, 9.5, 0.5), we = ws + between(r, 8, 9, 0.5);
-      at(d, 'context', ws, we, office ? 'At the office' : 'Working from home', office ? '#3a4a6a' : '#3a5a5a');
+      at(d, 'context', ws, we, office ? 'At the office' : 'Working from home', office ? '#2c5f86' : '#2e6e60');
       if (chance(r, 0.9)) ev(9.5, 9.75, 'Standup', '#5fb0a6');
       const lunch = between(r, 12, 13), lunchEnd = lunch + pick(r, [0.5, 0.75, 1]);
       ev(lunch, lunchEnd, pick(r, ['Lunch', 'Lunch', 'Lunch', 'Team lunch', `Lunch with ${pick(r, FRIENDS)}`]), '#8a7a4a');
@@ -479,7 +503,7 @@ function sampleContent(dayMin, dayMax) {
     if (!late && chance(r, 0.18)) { const s = Math.max(between(r, 19, 20), gymEnd + 0.25); ev(s, s + 2, `Dinner with ${pick(r, FRIENDS)}`, '#a0604a'); late = s + 2; }
     else if (!late && chance(r, 0.55)) { const s = between(r, 20.5, 21.5); late = s + between(r, 1, 1.5); ev(s, late, 'Reading', '#6a4f5f'); }
     const bed = Math.max(between(r, 22.5, wk === 5 || wk === 6 ? 24.5 : 23.75), late + 0.25);
-    at(d, 'context', bed, 24 + wakeAt(k + 1), 'Sleep', '#5b53a0');
+    ranges.push({ s: d * 24 + bed, e: d * 24 + 24 + wakeAt(k + 1), kind: 'context', n: 'Sleep', c: '#3d3891', hatch: true });
 
     // walks
     const rw = rngFor(k, 'walks');
@@ -557,7 +581,7 @@ function dayMaterial(day) {
   let entry = content.tex.get(day);
   if (entry) return entry.mat;
   const cv = document.createElement('canvas');
-  cv.width = TEX_W; cv.height = TEX_H;
+  cv.width = tex.w; cv.height = tex.h;
   drawDay(cv.getContext('2d'), day);
   if (query.has('strip')) { cv.style.cssText = 'position:fixed;left:0;width:100%;height:64px;pointer-events:none;z-index:4;image-rendering:auto'; cv.dataset.day = day; document.body.appendChild(cv); layoutStrips(); }
   const map = new THREE.CanvasTexture(cv);
@@ -575,70 +599,110 @@ function dayMaterial(day) {
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPast = past; vFade = fade;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float pastDim; uniform float pastDesat; varying float vPast; varying float vFade;')
-      .replace('#include <map_fragment>', '#include <map_fragment>\n{ float l = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)); diffuseColor.rgb = mix(diffuseColor.rgb, vec3(l), vPast * pastDesat) * (1.0 - vPast * pastDim); diffuseColor.a *= vFade; }');
+      .replace('#include <map_fragment>', '#include <map_fragment>\n{ float l = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)); diffuseColor.rgb = mix(diffuseColor.rgb, vec3(l), vPast * pastDesat) * (1.0 - vPast * pastDim); diffuseColor.a *= vFade; }')
+      // part unlit, so the ribbon shows the colours it was painted with and lighting only models it
+      .replace('#include <opaque_fragment>', 'outgoingLight = mix(outgoingLight, diffuseColor.rgb, 0.4);\n#include <opaque_fragment>');
   };
   content.tex.set(day, { map, mat });
   return mat;
 }
 
+// Marks are sized in u, 1% of the strip's width, so they keep their place in the bands at any
+// texture resolution.
 function drawDay(ctx, day) {
-  const W = TEX_W, H = TEX_H, px = W / 24, b = day * 24;
+  const W = tex.w, H = tex.h, u = H / 100, px = W / 24, b = day * 24;
   const X = t => (t - b) * px;
   const { ranges, points, series } = content.data;
   const inDay = r => r.e > b && r.s < b + 24;
+  const lighter = (c, l) => '#' + new THREE.Color(c).offsetHSL(0, 0.06, l).getHexString();
+  const TAU = Math.PI * 2;
 
   ctx.fillStyle = '#2b2e3a'; ctx.fillRect(0, 0, W, H);
   if (P.hourBands) {
-    ctx.fillStyle = 'rgba(255,255,255,0.045)';
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
     for (let h = 0; h < 24; h += 2) ctx.fillRect(h * px, 0, px, H);
   }
-  // context washes: full height, translucent, free to overlap
+
+  // context washes: full height, translucent. Sleep is hatched so it reads as time off by more
+  // than its colour, and a solid rail on the inner edge keeps the context visible under events.
+  const step = 7 * u, phase = ((day * W) % step + step) % step;    // hatch carries across midnight
   for (const r of ranges) if (r.kind === 'context' && inDay(r)) {
     const x0 = X(Math.max(r.s, b)), x1 = X(Math.min(r.e, b + 24));
-    ctx.fillStyle = withAlpha(r.c, 0.42); ctx.fillRect(x0, 0, x1 - x0, H);
+    ctx.fillStyle = withAlpha(r.c, 0.62); ctx.fillRect(x0, 0, x1 - x0, H);
+    if (r.hatch) {
+      ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, H); ctx.clip();
+      ctx.beginPath();
+      for (let x = -phase - Math.ceil(H / step) * step; x < x1; x += step) { ctx.moveTo(x, H); ctx.lineTo(x + H, 0); }
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1.1 * u; ctx.stroke();
+      ctx.restore();
+    }
+    const [c0, c1] = BAND.context;
+    ctx.fillStyle = lighter(r.c, 0.16); ctx.fillRect(x0, c0 * H, x1 - x0, (c1 - c0) * H);
   }
-  // series: a hairline with a soft fill, inner band
+
+  // series: a hairline over a soft fill, inner band
   for (const sr of series) {
     const [t0, t1] = BAND.series, y = v => (t1 - (t1 - t0) * v) * H;
     ctx.beginPath();
-    for (let t = b; t <= b + 24 + 1e-9; t += 1 / 6) ctx.lineTo(X(t), y(sr.at(t)));
-    ctx.strokeStyle = withAlpha(sr.c, 0.85); ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
+    for (let t = b; t <= b + 24 + 1e-9; t += 1 / 12) ctx.lineTo(X(t), y(sr.at(t)));
+    ctx.strokeStyle = withAlpha(sr.c, 0.9); ctx.lineWidth = 1.1 * u; ctx.lineJoin = 'round'; ctx.stroke();
     ctx.lineTo(W, t1 * H); ctx.lineTo(0, t1 * H); ctx.closePath();
-    ctx.fillStyle = withAlpha(sr.c, 0.14); ctx.fill();
+    ctx.fillStyle = withAlpha(sr.c, 0.12); ctx.fill();
   }
-  // events and all-day events: blocks in their sub-lanes. Ends are rounded only where the
-  // block really starts or ends, so a block cut at midnight shows a square "continues" edge.
+
+  // events and all-day events: blocks in their sub-lanes with an even gap all round and a lighter
+  // accent where they start. Ends are rounded and inset only where the block really starts or
+  // ends, so a block cut at midnight runs square to the edge and continues on the next day.
+  const gap = 1.2 * u;
   if (P.showTasks) for (const r of ranges) if ((r.kind === 'event' || r.kind === 'allday') && inDay(r)) {
-    const [y0, y1] = eventBox(r), hgt = (y1 - y0) * H;
-    const starts = r.s >= b, ends = r.e <= b + 24;
-    const x0 = starts ? X(r.s) + 2 : 0, x1 = ends ? X(r.e) - 2 : W;
-    const rad = Math.min(8, hgt / 3), corners = [starts ? rad : 0, ends ? rad : 0, ends ? rad : 0, starts ? rad : 0];
-    ctx.beginPath(); ctx.roundRect(x0, y0 * H + 2, x1 - x0, hgt - 4, corners);
-    ctx.fillStyle = r.kind === 'allday' ? withAlpha(r.c, 0.8) : r.c; ctx.fill();
-    ctx.strokeStyle = r.kind === 'allday' ? withAlpha('#ffffff', 0.25) : 'rgba(0,0,0,0.45)'; ctx.lineWidth = 2; ctx.stroke();
+    const [y0, y1] = eventBox(r), starts = r.s >= b, ends = r.e <= b + 24;
+    const x0 = starts ? X(r.s) + gap : 0, x1 = ends ? X(r.e) - gap : W;
+    const top = y0 * H + gap, hgt = (y1 - y0) * H - 2 * gap;
+    if (x1 - x0 < 1 || hgt < 1) continue;
+    const rad = Math.min(3.5 * u, hgt / 2, (x1 - x0) / 2);
+    ctx.beginPath(); ctx.roundRect(x0, top, x1 - x0, hgt, [starts ? rad : 0, ends ? rad : 0, ends ? rad : 0, starts ? rad : 0]);
+    ctx.fillStyle = r.kind === 'allday' ? withAlpha(r.c, 0.85) : r.c; ctx.fill();
+    if (starts) {
+      ctx.save(); ctx.clip();
+      ctx.fillStyle = lighter(r.c, 0.2); ctx.fillRect(x0, top, Math.min(1.6 * u, x1 - x0), hgt);
+      ctx.restore();
+    }
   }
-  // indicators: rounded arcs in the outer band
-  const [i0, i1] = BAND.indicator, iy = (i0 + i1) / 2 * H;
-  ctx.lineCap = 'round'; ctx.lineWidth = (i1 - i0) * H * 0.8;
+
+  // indicators: pills in the outer band
+  const [i0, i1] = BAND.indicator, iy = (i0 + i1) / 2 * H, th = (i1 - i0) * H * 0.7;
   for (const r of ranges) if (r.kind === 'indicator' && inDay(r)) {
-    ctx.strokeStyle = r.c; ctx.beginPath();
-    ctx.moveTo(X(Math.max(r.s, b)) + ctx.lineWidth / 2, iy); ctx.lineTo(X(Math.min(r.e, b + 24)) - ctx.lineWidth / 2, iy); ctx.stroke();
+    const x0 = X(Math.max(r.s, b)), x1 = X(Math.min(r.e, b + 24));
+    ctx.beginPath(); ctx.roundRect(x0, iy - th / 2, Math.max(th, x1 - x0), th, th / 2);
+    ctx.fillStyle = r.c; ctx.fill();
   }
-  // points
+
+  // points: a deadline is a hairline across the strip with a notch on the outer edge, the sun a
+  // disc with rays, a reminder a dot with a halo. Glyphs grow a little on the long thin strips,
+  // where 1% of the width is only a fraction of a pixel.
+  ctx.lineCap = 'round';
+  const k = W / H > 10 ? 1.3 : 1, gy = Math.max(iy, 5.8 * k * u);
   for (const pt of points) if (pt.t >= b && pt.t < b + 24) {
-    const x = X(pt.t);
-    ctx.fillStyle = pt.c;
+    const x = X(pt.t), iy = gy, u = H / 100 * k;
+    ctx.fillStyle = pt.c; ctx.strokeStyle = pt.c;
     if (pt.kind === 'deadline') {
-      ctx.fillRect(x - 1.5, 0, 3, H);
-      ctx.beginPath(); ctx.moveTo(x - 11, 0); ctx.lineTo(x + 11, 0); ctx.lineTo(x, 20); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 0.75; ctx.fillRect(x - 0.4 * u, 0, 0.8 * u, H); ctx.globalAlpha = 1;
+      if (P.icons) continue;
+      ctx.beginPath(); ctx.moveTo(x - 3.5 * u, 0); ctx.lineTo(x + 3.5 * u, 0); ctx.lineTo(x, 5 * u); ctx.closePath(); ctx.fill();
+    } else if (P.icons) {
+      continue;
     } else if (pt.kind === 'sun') {
-      ctx.beginPath(); ctx.arc(x, iy, 7, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = withAlpha(pt.c, 0.5); ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(x, iy, 13, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, iy, 2.6 * u, 0, TAU); ctx.fill();
+      ctx.lineWidth = 0.8 * u; ctx.beginPath();
+      for (let k = 0; k < 8; k++) {
+        const a = k * TAU / 8, c = Math.cos(a), sn = Math.sin(a);
+        ctx.moveTo(x + c * 4 * u, iy + sn * 4 * u); ctx.lineTo(x + c * 5.6 * u, iy + sn * 5.6 * u);
+      }
+      ctx.stroke();
     } else {
-      const y = iy;
-      ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = withAlpha(pt.c, 0.45); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, iy, 2.4 * u, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 0.5; ctx.lineWidth = 0.8 * u;
+      ctx.beginPath(); ctx.arc(x, iy, 4.4 * u, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
     }
   }
 }
@@ -705,6 +769,8 @@ function push(arr, p) { arr.push(p.x, p.y, p.z); }
 function build() {
   clearRoot();
   LAY = makeLayouts();
+  const spec = texSpecFor(LAY[view.to]);
+  if (spec.key !== tex?.key) { invalidateContent(); tex = spec; }
   const [sMin, sMax] = LAY[view.to].range;
   const stepsPerDay = 24 * 10;
 
@@ -893,12 +959,32 @@ function buildLabels(sMin, sMax) {
       const s = pt.t / 24;
       if (s < sMin || s > sMax || Math.abs(s - sNow) > P.labelDays || pt.kind === 'sun') continue;
       const day = Math.floor(s);
-      label('pt' + pt.t, 'pt', pt.n, { anchor: pair(s, 0.5 / P.ribbonFill, 0.02, day), s, color: pt.c });
+      // beside its icon when icons are on, otherwise just outside the outer edge
+      const [i0, i1] = BAND.indicator;
+      label('pt' + pt.t, 'pt', pt.n, { anchor: pair(s, P.icons ? yToV((i0 + i1) / 2) : 0.5 / P.ribbonFill, 0.02, day),
+        s, color: pt.c, besideIcon: P.icons });
     }
+  }
+
+  // point icons sit on the strip in the outer band, at a fixed screen size set per layout
+  if (P.icons) for (const pt of content.data.points) {
+    const s = pt.t / 24;
+    if (s < sMin || s > sMax) continue;
+    const day = Math.floor(s), [i0, i1] = BAND.indicator;
+    const glyph = pt.kind === 'sun' ? (pt.n === 'Sunrise' ? 'sunrise' : 'sunset') : pt.kind;
+    label('icon' + pt.t + pt.n, 'icon', ICONS[glyph], { anchor: pair(s, yToV((i0 + i1) / 2), 0.02, day), s, color: pt.c, icon: true });
   }
 
   for (const [key, L] of labelPool) if (!L.used) { L.el.remove(); labelPool.delete(key); }
 }
+
+// 24-unit line icons, stroked in the point's colour
+const ICONS = Object.fromEntries(Object.entries({
+  sunrise:  '<path d="M3 18h18M7 18a5 5 0 0 1 10 0M12 3v6M9 6l3-3 3 3M4.2 12.2l1.4 1.4M19.8 12.2l-1.4 1.4"/>',
+  sunset:   '<path d="M3 18h18M7 18a5 5 0 0 1 10 0M12 3v6M9 6l3 3 3-3M4.2 12.2l1.4 1.4M19.8 12.2l-1.4 1.4"/>',
+  reminder: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15zM10 21h4"/>',
+  deadline: '<path d="M6 21V4M6 4h11l-2.5 4.5L17 13H6"/>',
+}).map(([k, d]) => [k, `<svg viewBox="0 0 24 24">${d}</svg>`]));
 
 const _v = new THREE.Vector3();
 function toScreen(p, w, h) {
@@ -915,17 +1001,21 @@ function updateOverlay() {
     if (p.behind || p.x < -200 || p.x > w + 200 || p.y < -100 || p.y > h + 100) { el.style.display = 'none'; continue; }
     let rot = 0, tx = -50, ty = -50, ox = 0, oy = 0, scale = 1, show = true;
 
-    if (L.kind === 'task') {
+    if (L.icon) {
+      scale = THREE.MathUtils.lerp(LAY[view.from].icon, LAY[view.to].icon, mixK()) / 16;
+    } else if (L.besideIcon) {
+      tx = 0; ox = THREE.MathUtils.lerp(LAY[view.from].icon, LAY[view.to].icon, mixK()) * 0.7;
+    } else if (L.kind === 'task') {
       // rotate along the strip's projected tangent, keep text reading left to right,
       // and relax toward upright in the flat layouts
       const ta = toScreen(mixV(L.tanA), w, h), tb = toScreen(mixV(L.tanB), w, h);
       rot = Math.atan2(tb.y - ta.y, tb.x - ta.x) * 180 / Math.PI;
       if (rot > 90) rot -= 180; else if (rot < -90) rot += 180;
       rot *= 1 - uprightK;
-      // size with the projected strip width on the spiral, fixed size when upright
+      // size with the projected height of the event's lane, within readable limits
       const wi = toScreen(mixV(L.wIn), w, h), wo = toScreen(mixV(L.wOut), w, h);
-      const ribbonPx = Math.hypot(wo.x - wi.x, wo.y - wi.y);
-      scale = THREE.MathUtils.lerp(THREE.MathUtils.clamp(ribbonPx / 34, 0.6, 1.4), 1, uprightK);
+      const lanePx = Math.hypot(wo.x - wi.x, wo.y - wi.y);
+      scale = THREE.MathUtils.clamp(lanePx / 22, 0.85, 1.3);
       // room for the text: the strip's extent along the text direction (arc chord or strip
       // width, whichever runs that way) must fit the text, and across it must fit a line
       const c0 = toScreen(mixV(L.arc[0]), w, h), c1 = toScreen(mixV(L.arc[8]), w, h);
@@ -965,7 +1055,7 @@ function updateOverlay() {
 
     el.style.display = show ? '' : 'none';
     if (!show) continue;
-    el.style.opacity = L.callout ? 1 : (labelAlpha(L.s) * fadeAt(L.s)).toFixed(3);
+    el.style.opacity = L.callout ? 1 : (Math.min(1, labelAlpha(L.s) * (L.icon ? 1.2 : 1)) * fadeAt(L.s)).toFixed(3);
     if (L.color) el.style.color = L.color;
     el.style.transform = `translate(${(p.x + ox).toFixed(1)}px, ${(p.y + oy).toFixed(1)}px) translate(${tx}%, ${ty}%) rotate(${rot.toFixed(1)}deg) scale(${scale.toFixed(3)})`;
   }
@@ -1100,6 +1190,7 @@ gTime.add(P, 'showEdges').name('edges').onChange(build);
 gTime.add(P, 'hourBands').name('hour bands').onChange(() => { invalidateContent(); build(); });
 gTime.add(P, 'labels').name('labels').onChange(build);
 gTime.add(P, 'taskLabels').name('event labels').onChange(build);
+gTime.add(P, 'icons').onChange(() => { invalidateContent(); build(); });
 gTime.add(P, 'labelDays', 0.25, 4, 0.25).name('label range (d)').onChange(build);
 const gPast = gui.addFolder('past');
 gPast.add(P, 'pastDim', 0, 1, 0.01).name('dim').onChange(v => pastUniforms.dim.value = v);
