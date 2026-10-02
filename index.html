@@ -4,10 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>spiral-time</title>
+<meta name="description" content="A day timeline drawn as a ribbon in 3D: a spiral on a cone, a receding coil, an unrolled strip and a week of columns, morphing between them.">
+<meta name="theme-color" content="#0e0f13">
+<meta property="og:type" content="website">
+<meta property="og:title" content="spiral-time">
+<meta property="og:description" content="A day timeline drawn as a ribbon in 3D: a spiral on a cone, a receding coil, an unrolled strip and a week of columns, morphing between them.">
+<meta property="og:url" content="https://fusupo.github.io/spiral-time/">
+<meta property="og:image" content="https://fusupo.github.io/spiral-time/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="spiral-time">
+<meta name="twitter:description" content="A day timeline drawn as a ribbon in 3D: spiral, coil, strip and week, morphing between them.">
+<meta name="twitter:image" content="https://fusupo.github.io/spiral-time/og.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e0f13'/%3E%3Cpath d='M16.0 14.8 L16.6 14.6 L17.3 14.8 L17.9 15.3 L18.3 16.1 L18.3 17.1 L17.9 18.1 L17.0 18.9 L15.7 19.4 L14.3 19.2 L12.9 18.4 L12.0 17.1 L11.6 15.4 L11.9 13.6 L13.1 11.9 L14.8 10.9 L17.0 10.6 L19.2 11.2 L21.1 12.7 L22.3 14.9 L22.5 17.5 L21.6 20.1 L19.6 22.2 L17.0 23.4 L13.9 23.4 L11.0 22.2 L8.7 19.9 L7.5 16.7 L7.6 13.2 L9.2 10.0 L12.0 7.6 L15.6 6.4 L19.5 6.8 L23.1 8.7 L25.6 12.0 L26.7 16.1 L26.1 20.4 L23.7 24.2 L20.0 26.8 L15.4 27.8' fill='none' stroke='%23d9a441' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
   html, body { margin: 0; height: 100%; background: #0e0f13; color: #c9c9d0;
                font: 13px system-ui, sans-serif; overflow: hidden; }
-  #c { display: block; width: 100%; height: 100%; }
+  #c { display: block; width: 100%; height: 100%; touch-action: none; }
   #overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
   .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform;
          font-variant-numeric: tabular-nums; }
@@ -21,14 +35,30 @@
          border-radius: 6px; padding: 6px 9px; font-size: 12px; line-height: 1.4; color: #e8e8ee; max-width: 260px; z-index: 5; }
   #tip .h { color: #8e92a3; font-size: 11px; letter-spacing: .06em; }
   #tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
-  .lbl.now  { padding: 2px 0; color: #e8e8ee; line-height: 1.35; }
+  .lbl.now  { padding: 2px 0; color: #e8e8ee; line-height: 1.35; text-shadow: 0 0 6px #0e0f13, 0 0 2px #0e0f13; }
   .lbl.now .t  { font: 300 22px system-ui, sans-serif; letter-spacing: .05em; }
   .lbl.now .n  { font: 400 13px system-ui, sans-serif; }
   .lbl.now .u  { font: 400 11px system-ui, sans-serif; color: #8e92a3; letter-spacing: .04em; }
-  #hint { position: fixed; left: 14px; bottom: 12px; opacity: .5;
-          pointer-events: none; letter-spacing: .04em; }
+  #hint { position: fixed; left: 16px; right: 16px; bottom: 12px; opacity: .5;
+          pointer-events: none; letter-spacing: .04em; font-size: 12px; }
   #brand { position: fixed; left: 16px; top: 12px; font: 600 15px Georgia, serif;
-           letter-spacing: .02em; color: #d9a441; opacity: .85; pointer-events: none; }
+           letter-spacing: .02em; color: #d9a441; opacity: .85; text-decoration: none; }
+  #brand:hover { opacity: 1; }
+  #about { position: fixed; left: 16px; top: 36px; max-width: 320px; font-size: 12px; line-height: 1.45;
+           color: #8e92a3; pointer-events: none; }
+  #views { position: fixed; left: 16px; bottom: 36px; display: flex; gap: 2px;
+           padding: 3px; background: rgba(21,22,28,.85); border: 1px solid #2b2c36; border-radius: 8px; }
+  #views button { all: unset; cursor: pointer; padding: 7px 13px; border-radius: 5px;
+                  font: 500 11px system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #8e92a3; }
+  #views button:hover { color: #e8e8ee; }
+  #views button[aria-pressed="true"] { background: #2b2c36; color: #e2b04a; }
+  #views button:focus-visible { outline: 1px solid #e2b04a; }
+  @media (max-width: 640px) {
+    #about { display: none; }
+    #hint { text-align: center; }
+    #views { left: 50%; transform: translateX(-50%); }
+    #views button { padding: 9px 11px; }
+  }
   .lil-gui { --background-color: #15161c; --widget-color: #22232b; --hover-color: #2b2c36;
              --focus-color: #33343f; --text-color: #c9c9d0; --title-background-color: #101116;
              --number-color: #e2b04a; --string-color: #8fd3c9; --font-size: 11px; }
@@ -42,10 +72,14 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="brand">spiral-time</div>
 <div id="overlay"></div>
+<a id="brand" href="https://github.com/fusupo/spiral-time" target="_blank" rel="noopener">spiral-time</a>
+<div id="about"></div>
 <div id="tip"></div>
-<div id="hint">drag: tilt / spin &nbsp;·&nbsp; wheel: zoom &nbsp;·&nbsp; midnight at top, clockwise · future spirals inward, past falls off the edge</div>
+<div id="views" role="group" aria-label="view">
+  <button data-view="spiral">spiral</button><button data-view="coil">coil</button><button data-view="linear">strip</button><button data-view="week">week</button>
+</div>
+<div id="hint"></div>
 
 <script>
 addEventListener('error', e => { document.getElementById('hint').textContent = 'error: ' + e.message; });
@@ -77,9 +111,11 @@ const P = {
   zoom:        1,
   followTime:  true,   // keep the "now" marker fixed on screen as time passes
   morph:       1,      // progress of the current view transition, 0 = from, 1 = to
-  nowHour:     now.getHours() + now.getMinutes() / 60,   // continuous, never wraps
+  nowHour:     Number.isFinite(parseFloat(query.get('hour'))) ? parseFloat(query.get('hour'))
+               : now.getHours() + now.getMinutes() / 60,   // continuous, never wraps
+  live:        !query.has('hour'),   // follow the real clock; turned off by play or by setting the time
   play:        false,
-  speed:       2,      // hours per second while playing
+  speed:       0.1,    // hours per second while playing
   showTasks:   true,
   showTicks:   true,
   showEdges:   true,
@@ -97,6 +133,8 @@ const P = {
 const BG = new THREE.Color('#0e0f13');
 const Z = new THREE.Vector3(0, 0, 1);
 const nowDay = () => P.nowHour / 24;
+// real time in hours since the load day's midnight, so it keeps counting past midnight
+const liveHour = () => (Date.now() - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 3.6e6;
 const easeInOut = k => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
 if (P.view === 'coil') { P.tilt = 80; P.spin = -128.5; } else if (P.view !== 'spiral') P.tilt = 0;
 
@@ -148,7 +186,10 @@ function sRange(F) {
 //   lift = offset along the surface normal, for lines drawn on top
 //   day  = which day segment s belongs to; only matters where the strip is cut at midnight
 // basePose: the camera orbit shared by all layouts, from tilt / spin / zoom around a target.
-function basePose(target, dist) {
+// Distances are tuned for a landscape window; narrower ones back off so the width still fits.
+const FIT_ASPECT = 1.6;
+function basePose(target, dist, fitAspect = FIT_ASPECT) {
+  dist *= Math.max(1, fitAspect / camera.aspect);
   const t = THREE.MathUtils.degToRad(P.tilt), sp = THREE.MathUtils.degToRad(P.spin);
   const pos = new THREE.Vector3(0, -dist * Math.sin(t), dist * Math.cos(t)).applyAxisAngle(Z, sp).add(target);
   const up  = new THREE.Vector3(0,  Math.cos(t), Math.sin(t)).applyAxisAngle(Z, sp);
@@ -184,7 +225,7 @@ function makeLayouts() {
     // scale the orbit about the cone apex by the similarity factor between turn 0 and now,
     // so the marker projects to the same screen point at every hour of every day
     camera() {
-      const pose = basePose(new THREE.Vector3(0, 0, 0), 17 / P.zoom);
+      const pose = basePose(new THREE.Vector3(0, 0, 0), 20 / P.zoom, 1.25);   // round, so it needs less width
       if (P.followTime) {
         if (F.apex) {
           const k = F.scaleAt(sNow);
@@ -258,8 +299,26 @@ function setView(name) {
   if (!LAY[name]) return;
   view.from = view.to; view.to = name;
   view.tiltFrom = P.tilt; view.tiltTo = LAY[name].defaultTilt;
-  view.spinFrom = P.spin; view.spinTo = LAY[name].defaultSpin || 0;
+  // turn the short way round
+  const spinTo = LAY[name].defaultSpin || 0;
+  view.spinFrom = P.spin; view.spinTo = P.spin + ((spinTo - P.spin) % 360 + 540) % 360 - 180;
   P.morph = 0; view.anim = true;
+  showView();
+}
+
+// view switcher and the one-line description of the current view
+const about = document.getElementById('about');
+const viewButtons = [...document.querySelectorAll('#views button')];
+function showView() {
+  for (const b of viewButtons) b.setAttribute('aria-pressed', b.dataset.view === view.to);
+  about.textContent = {
+    spiral: P.flow === 'inward'
+      ? 'One turn per day, midnight at the top, clockwise. The future spirals inward, the past falls off the edge.'
+      : 'One turn per day, midnight at the top, clockwise. The future spirals outward, the past descends into the well.',
+    coil:   'One loop per day. The future recedes into the distance, the past comes toward you.',
+    linear: 'The same ribbon, unrolled. Time runs left to right.',
+    week:   'The ribbon cut at midnight, one column per day. Time runs down.',
+  }[view.to];
 }
 
 // a strip point in both layouts of the transition
@@ -312,54 +371,140 @@ const BAND = { indicator: [0.03, 0.11], allday: [0.14, 0.22], event: [0.26, 0.73
 const TEX_W = 3072, TEX_H = 256;      // one day per texture: 128 texels per hour
 const WHITE = new THREE.Color(1, 1, 1);
 
-function hash(n) { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
 function withAlpha(hex, a) {
   const c = new THREE.Color(hex);
   return `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
 }
 
+// Mock calendar. Randomness is seeded per calendar date, so a given date always shows the same
+// day while neighbouring days differ, and ?seed= reshuffles the whole calendar. Each part of a
+// day (work, evening, ...) draws from its own stream, so changing one leaves the others alone.
+function strHash(str) { let h = 2166136261; for (const ch of str) h = Math.imul(h ^ ch.codePointAt(0), 16777619); return h >>> 0; }
+const SEED = strHash(query.get('seed') || 'spiral-time');
+function rngFor(...keys) {
+  let a = SEED;
+  for (const k of keys) a = Math.imul(a ^ (typeof k === 'string' ? strHash(k) : k), 2654435761) ^ (a >>> 15);
+  return () => {                        // mulberry32
+    a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const pick = (r, arr) => arr[Math.floor(r() * arr.length)];
+const between = (r, lo, hi, step = 0.25) => lo + Math.round(r() * (hi - lo) / step) * step;
+const chance = (r, p) => r() < p;
+function pickSome(r, arr, n) {
+  const pool = [...arr], out = [];
+  while (out.length < n && pool.length) out.push(pool.splice(Math.floor(r() * pool.length), 1)[0]);
+  return out;
+}
+
+// calendar day number (days since 1970-01-01) of the day d days from today, and its weekday
+const dayKey = d => Math.round(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() + d) / 864e5);
+const weekdayOf = k => ((k + 4) % 7 + 7) % 7;          // 1970-01-01 was a Thursday
+const isWeekend = k => weekdayOf(k) === 0 || weekdayOf(k) === 6;
+const isDayOff = k => !isWeekend(k) && rngFor(k, 'off')() < 0.04;
+
+const FOCUS = [['Write API documentation', '#2f8f85'], ['Billing integration', '#3d6e9c'], ['Refactor auth middleware', '#3c7a72'],
+  ['Fix flaky tests', '#4a6fa5'], ['Design system audit', '#5a7f6a'], ['Prototype search UI', '#2f7a9a'],
+  ['Write RFC: sync engine', '#3d6e9c'], ['Code review backlog', '#4a7a8a'], ['Performance profiling', '#2f8f85'], ['Onboarding flow', '#3c7a72']];
+const MEETINGS = [['1:1 with lead', '#6a9ad0'], ['Vendor call', '#9a6ad0'], ['Design review', '#5fb0a6'], ['Sprint planning', '#6a9ad0'],
+  ['Interview: backend', '#c08ad0'], ['Coffee with Sam', '#8fbf6a'], ['Product sync', '#5fb0a6'], ['Retro', '#9a6ad0'],
+  ['Customer call', '#d0a06a'], ['Hiring debrief', '#c08ad0']];
+const WEEKEND = [['Brunch', '#8a7a4a', 10, 12, [1.5, 2]], ['Groceries', '#7a8a6a', 10, 17, [1]], ['Long run', '#b0743a', 8.5, 10, [1, 1.5]],
+  ['Hike', '#5a8a4a', 9, 11, [3, 4]], ['Farmers market', '#8fbf6a', 9, 11, [1.5]], ['Movie', '#6a5a9a', 14, 20, [2.5]],
+  ['Visit parents', '#c08a5a', 12, 15, [3, 4]], ['Laundry', '#5a6a7a', 10, 17, [1]], ['Side project', '#3d6e9c', 13, 16, [2, 3]],
+  ['Museum', '#9a6ad0', 13, 15, [2]]];
+const FRIENDS = ['Sam', 'Ana', 'Priya', 'Jonas', 'Mei', 'Leo', 'Noor', 'Theo'];
+
+const wakeAt = k => { const r = rngFor(k, 'wake'); return isWeekend(k) ? between(r, 7.5, 9.25) : between(r, 6.5, 7.5); };
+
 function sampleContent(dayMin, dayMax) {
   const ranges = [], points = [];
-  for (let d = dayMin; d <= dayMax; d++) {
-    const b = d * 24, wk = ((now.getDay() + d) % 7 + 7) % 7, weekend = wk === 0 || wk === 6;
-    ranges.push({ s: b + 23, e: b + 31, kind: 'context', c: '#5b53a0', n: 'Sleep' });
-    if (!weekend) ranges.push({ s: b + 8.5, e: b + 17.5, kind: 'context', c: '#3a4a6a', n: 'At the office' });
-    ranges.push({ s: b + 7.25, e: b + 8, kind: 'event', c: '#7a8a3a', n: 'Morning routine' });
-    if (wk === 2 || wk === 5) {
-      ranges.push({ s: b + 10, e: b + 14, kind: 'event', c: '#3c7a72', n: 'Design review' });
-      ranges.push({ s: b + 11, e: b + 11.5, kind: 'event', c: '#8fbf6a', n: 'Coffee with Sam' });
-    } else if (!weekend) {
-      ranges.push({ s: b + 9,     e: b + 12.5,  kind: 'event', c: '#2f8f85', n: 'Write API documentation' });
-      ranges.push({ s: b + 9,     e: b + 9.5,   kind: 'event', c: '#5fb0a6', n: 'Standup' });
-      ranges.push({ s: b + 12.5,  e: b + 13.25, kind: 'event', c: '#8a7a4a', n: 'Lunch' });
-      ranges.push({ s: b + 13.5,  e: b + 17,    kind: 'event', c: '#3d6e9c', n: 'Billing integration' });
-      ranges.push({ s: b + 15,    e: b + 15.5,  kind: 'event', c: '#6a9ad0', n: '1:1 with lead' });
-      ranges.push({ s: b + 15.25, e: b + 16,    kind: 'event', c: '#9a6ad0', n: 'Vendor call' });
-    }
-    ranges.push({ s: b + 18,   e: b + 19, kind: 'event', c: '#b0743a', n: 'Gym' });
-    ranges.push({ s: b + 20.5, e: b + 22, kind: 'event', c: '#6a4f5f', n: 'Reading' });
-    // timed events that cross midnight
-    if (wk === 2) ranges.push({ s: b + 22.5, e: b + 25.5, kind: 'event', c: '#c0533f', n: 'Late deploy window' });
-    if (wk === 5) ranges.push({ s: b + 21,   e: b + 26.5, kind: 'event', c: '#4f7fc0', n: 'Night flight' });
-    if (wk === 6) ranges.push({ s: b + 20,   e: b + 25,   kind: 'event', c: '#b04a8a', n: 'Party at Ana\'s' });
-    // all-day events, some spanning several days
-    if (wk === 3) ranges.push({ s: b, e: b + 24, kind: 'allday', c: '#d08a3a', n: 'Sam\'s birthday' });
-    if (wk === 1) ranges.push({ s: b, e: b + 48, kind: 'allday', c: '#3a8ad0', n: 'Offsite' });
-    if (d % 14 === 3) ranges.push({ s: b, e: b + 24 * 10, kind: 'allday', c: '#5a6a3a', n: `Sprint ${40 + Math.floor(d / 14)}` });
-    for (const [h, len] of [[6.9, 0.4], [12.55, 0.5], [17.55, 0.4], [19.2, 0.3]]) {
-      const j = hash(d * 7 + h) * 0.3;
-      ranges.push({ s: b + h + j, e: b + h + j + len, kind: 'indicator', c: '#3fb8a8', n: 'Walk' });
-    }
-    points.push({ t: b + 6.7 + hash(d) * 0.2, kind: 'sun', c: '#e2b04a', n: 'Sunrise' });
-    points.push({ t: b + 19.3 - hash(d + 9) * 0.2, kind: 'sun', c: '#e2b04a', n: 'Sunset' });
-    points.push({ t: b + 8.5, kind: 'reminder', c: '#8fd3c9', n: 'Take meds' });
-    if (wk === 4) points.push({ t: b + 17, kind: 'deadline', c: '#e0574f', n: 'Invoice due' });
-    if (wk === 1) points.push({ t: b + 12, kind: 'deadline', c: '#e0574f', n: 'Submit report' });
+  const at = (d, kind, s, e, n, c) => ranges.push({ s: d * 24 + s, e: d * 24 + e, kind, n, c });
+
+  // all-day and multi-day events: look back far enough to catch ones already running at dayMin
+  for (let d = dayMin - 12; d <= dayMax; d++) {
+    const k = dayKey(d), wk = weekdayOf(k), r = rngFor(k, 'allday');
+    if ((k - 4) % 14 === 0) at(d, 'allday', 0, 24 * 12, `Sprint ${Math.floor((k - 4) / 14) % 100}`, '#5a6a3a');   // every other Monday
+    if (d < dayMin - 4) continue;
+    if (chance(r, 0.05)) at(d, 'allday', 0, 24, `${pick(r, FRIENDS)}'s birthday`, '#d08a3a');
+    if (wk >= 1 && wk <= 3 && chance(r, 0.04)) at(d, 'allday', 0, 48, 'Offsite', '#3a8ad0');
+    if (wk >= 2 && wk <= 4 && chance(r, 0.03)) at(d, 'allday', 0, 72, 'Conference', '#4a9a9a');
+    if (wk === 5 && chance(r, 0.08)) at(d, 'allday', 0, 72, 'Weekend away', '#9a6a4a');
+    if (isDayOff(k)) at(d, 'allday', 0, 24, 'Day off', '#7a9a5a');
   }
+
+  for (let d = dayMin - 1; d <= dayMax; d++) {
+    const k = dayKey(d), wk = weekdayOf(k), free = isWeekend(k) || isDayOff(k);
+    const ev = (s, e, n, c) => at(d, 'event', s, e, n, c);
+    const wake = wakeAt(k);
+    ev(wake + 0.25, wake + 1, free ? 'Slow breakfast' : 'Morning routine', '#7a8a3a');
+
+    let dayEnd = 17;
+    if (!free) {
+      const r = rngFor(k, 'work');
+      const office = chance(r, 0.7), ws = between(r, 8.5, 9.5, 0.5), we = ws + between(r, 8, 9, 0.5);
+      at(d, 'context', ws, we, office ? 'At the office' : 'Working from home', office ? '#3a4a6a' : '#3a5a5a');
+      if (chance(r, 0.9)) ev(9.5, 9.75, 'Standup', '#5fb0a6');
+      const lunch = between(r, 12, 13), lunchEnd = lunch + pick(r, [0.5, 0.75, 1]);
+      ev(lunch, lunchEnd, pick(r, ['Lunch', 'Lunch', 'Lunch', 'Team lunch', `Lunch with ${pick(r, FRIENDS)}`]), '#8a7a4a');
+      const [fa, fb] = pickSome(r, FOCUS, 2);
+      ev(10, lunch, ...fa);
+      ev(lunchEnd + 0.25, we - between(r, 0, 1), ...fb);
+      for (const [n, c] of pickSome(r, MEETINGS, Math.floor(r() * 4))) {
+        const s = between(r, 10, we - 1, 0.5), e = s + pick(r, [0.5, 0.5, 1, 1, 1.5]);
+        if (e > lunch && s < lunchEnd) continue;     // keep lunch free
+        ev(s, e, n, c);
+      }
+      dayEnd = we;
+    } else {
+      const r = rngFor(k, 'weekend'), placed = [];
+      for (const [n, c, lo, hi, lens] of pickSome(r, WEEKEND, 2 + Math.floor(r() * 2))) {
+        const s = Math.max(between(r, lo, hi), wake + 1.25), e = s + pick(r, lens);
+        if (placed.some(([a, b]) => s < b && e > a)) continue;
+        placed.push([s, e]); ev(s, e, n, c);
+      }
+    }
+
+    // evening, then sleep from bedtime (pushed past anything late) to tomorrow's wake-up
+    const r = rngFor(k, 'evening');
+    let late = 0;
+    if (wk === 6 && chance(r, 0.4)) { const s = between(r, 20, 21.5); late = s + between(r, 4, 5); ev(s, late, `Party at ${pick(r, FRIENDS)}'s`, '#b04a8a'); }
+    else if (wk === 5 && chance(r, 0.25)) { late = 24.5; ev(21.5, late, 'Concert', '#4f7fc0'); }
+    else if (!free && chance(r, 0.06)) { late = 25.5; ev(22.5, late, 'Late deploy window', '#c0533f'); }
+    let gymEnd = 0;
+    if (!free && chance(r, 0.55)) { const s = Math.max(dayEnd + 0.25, between(r, 17.5, 19, 0.5)); gymEnd = s + 1; ev(s, gymEnd, 'Gym', '#b0743a'); }
+    if (!late && chance(r, 0.18)) { const s = Math.max(between(r, 19, 20), gymEnd + 0.25); ev(s, s + 2, `Dinner with ${pick(r, FRIENDS)}`, '#a0604a'); late = s + 2; }
+    else if (!late && chance(r, 0.55)) { const s = between(r, 20.5, 21.5); late = s + between(r, 1, 1.5); ev(s, late, 'Reading', '#6a4f5f'); }
+    const bed = Math.max(between(r, 22.5, wk === 5 || wk === 6 ? 24.5 : 23.75), late + 0.25);
+    at(d, 'context', bed, 24 + wakeAt(k + 1), 'Sleep', '#5b53a0');
+
+    // walks
+    const rw = rngFor(k, 'walks');
+    for (const h of pickSome(rw, [7.4, 10.5, 12.6, 15.5, 17.6, 19.3], 2 + Math.floor(rw() * 3))) {
+      const s = h + between(rw, -0.3, 0.3, 0.05);
+      at(d, 'indicator', s, s + between(rw, 0.25, 0.6, 0.05), 'Walk', '#3fb8a8');
+    }
+
+    // points: sun times from the time of year (about 40°N), a daily reminder, the odd deadline
+    const rp = rngFor(k, 'points'), b = d * 24;
+    const date = new Date(k * 864e5), doy = (k - Date.UTC(date.getUTCFullYear(), 0, 1) / 864e5);
+    const daylight = 12 + 3.1 * Math.sin(2 * Math.PI * (doy - 80) / 365.25);
+    points.push({ t: b + 12.6 - daylight / 2, kind: 'sun', c: '#e2b04a', n: 'Sunrise' });
+    points.push({ t: b + 12.6 + daylight / 2, kind: 'sun', c: '#e2b04a', n: 'Sunset' });
+    points.push({ t: b + 8.5, kind: 'reminder', c: '#8fd3c9', n: 'Take meds' });
+    if (date.getUTCDate() === 1) points.push({ t: b + 10, kind: 'reminder', c: '#8fd3c9', n: 'Pay rent' });
+    if (!free && chance(rp, 0.12)) points.push({ t: b + pick(rp, [12, 17]), kind: 'deadline', c: '#e0574f',
+      n: pick(rp, ['Invoice due', 'Submit report', 'Expense report due', 'RFC comments due', 'Release cut']) });
+  }
+
+  const base = dayKey(0) * 24;          // so the noise belongs to the hour, not to its distance from today
   const series = [{ n: 'Energy', c: '#c8a44a', at: t => {
-    const h = ((t % 24) + 24) % 24;
+    const h = ((t % 24) + 24) % 24, ta = t + base;
     return THREE.MathUtils.clamp(0.5 + 0.38 * Math.sin((h - 6) / 24 * Math.PI * 2)
-      + 0.12 * Math.sin(t * 1.7) + 0.06 * (hash(Math.floor(t * 4)) - 0.5), 0.05, 0.95);
+      + 0.12 * Math.sin(ta * 1.7) + 0.06 * (rngFor(Math.floor(ta * 4), 'energy')() - 0.5), 0.05, 0.95);
   } }];
   packEvents(ranges.filter(r => r.kind === 'event'));
   packEvents(ranges.filter(r => r.kind === 'allday'));
@@ -675,7 +820,7 @@ function fmtDuration(hours) {
 }
 function dayLabel(d) {
   const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
-  return t.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  return t.toLocaleDateString(undefined, innerWidth < 640 ? { weekday: 'short', day: 'numeric' } : { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 function label(key, kind, html, spec) {
@@ -803,9 +948,19 @@ function updateOverlay() {
       // push the readout outward across the strip, anchor its near corner
       const c = toScreen(mixV(L.inner), w, h);
       let dx = p.x - c.x, dy = p.y - c.y; const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
-      ox = dx * 22; oy = dy * 22;
-      tx = dx > 0.35 ? 0 : dx < -0.35 ? -100 : -50;
-      ty = dy > 0.35 ? 0 : dy < -0.35 ? -100 : -50;
+      const place = () => {
+        ox = dx * 22; oy = dy * 22;
+        tx = dx > 0.35 ? 0 : dx < -0.35 ? -100 : -50;
+        ty = dy > 0.35 ? 0 : dy < -0.35 ? -100 : -50;
+      };
+      place();
+      // flip to the inner side when the outer side would run off screen or under the view switcher
+      const bw = el.offsetWidth, bh = el.offsetHeight;
+      const x0 = p.x + ox + tx / 100 * bw, y0 = p.y + oy + ty / 100 * bh;
+      if (x0 < 8 || y0 < 8 || x0 + bw > w - 8 || y0 + bh > h - 84) {
+        dx = -dx; dy = -dy; place();
+        ox += c.x - p.x; oy += c.y - p.y;      // and hang it off the inner edge instead
+      }
     }
 
     el.style.display = show ? '' : 'none';
@@ -829,12 +984,30 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  if (LAY) updateCamera();
 }
 addEventListener('resize', resize);
 
 // ---------------------------------------------------------------- interaction
-let drag = null;
-canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+// One pointer drags, two pinch to zoom. A touch that barely moves is a tap and shows the tooltip.
+let drag = null, pinch = null, tap = null;
+const pointers = new Map();
+const pinchDist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  tip.style.display = 'none';
+  if (pointers.size === 2) { pinch = { d: pinchDist(), zoom: P.zoom }; drag = null; tap = null; }
+  else if (pointers.size === 1) { drag = { x: e.clientX, y: e.clientY }; tap = e.pointerType === 'mouse' ? null : { x: e.clientX, y: e.clientY }; }
+});
+function pointerEnd(e) {
+  pointers.delete(e.pointerId);
+  if (tap && e.type === 'pointerup' && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) hover(e);
+  tap = null;
+  if (pointers.size < 2) pinch = null;
+  const rest = [...pointers.values()][0];
+  drag = rest ? { ...rest } : null;
+}
 const raycaster = new THREE.Raycaster();
 const tip = document.getElementById('tip');
 // what is under the cursor: raycast the ribbon, read the hit's UV back into (time, lane)
@@ -868,7 +1041,15 @@ function hover(e) {
 }
 
 canvas.addEventListener('pointermove', e => {
-  if (!drag) { hover(e); return; }
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pointers.size >= 2) {
+    P.zoom = THREE.MathUtils.clamp(pinch.zoom * pinchDist() / pinch.d, 0.2, 4);
+    updateCamera(); refreshGui();
+    return;
+  }
+  if (!drag) { if (e.pointerType === 'mouse') hover(e); return; }
+  if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 8) return;
+  tap = null;
   tip.style.display = 'none';
   P.spin = (P.spin - (e.clientX - drag.x) * 0.3) % 360;
   P.tilt = THREE.MathUtils.clamp(P.tilt + (e.clientY - drag.y) * 0.25, 0, 80);
@@ -876,8 +1057,9 @@ canvas.addEventListener('pointermove', e => {
   view.anim = false;                       // a manual tilt overrides the transition's tilt tween
   updateCamera(); refreshGui();
 });
-canvas.addEventListener('pointerup', () => drag = null);
-canvas.addEventListener('pointerleave', () => tip.style.display = 'none');
+canvas.addEventListener('pointerup', pointerEnd);
+canvas.addEventListener('pointercancel', pointerEnd);
+canvas.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') tip.style.display = 'none'; });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   P.zoom = THREE.MathUtils.clamp(P.zoom * Math.exp(-e.deltaY * 0.001), 0.2, 4);
@@ -886,7 +1068,7 @@ canvas.addEventListener('wheel', e => {
 
 // ---------------------------------------------------------------- gui
 const rebuild = () => { build(); updateCamera(); };
-const gui = new GUI({ title: 'spiral' });
+const gui = new GUI({ title: 'settings' }).close();
 const gView = gui.addFolder('view');
 gView.add(P, 'view', ['spiral', 'coil', 'linear', 'week']).onChange(n => { setView(n); rebuild(); });
 gView.add(P, 'morph', 0, 1, 0.001).name('transition').onChange(() => { view.anim = false; applyMorph(); updateCamera(); });
@@ -905,8 +1087,12 @@ gShape.add(P, 'coilPitch', 0.1, 2, 0.05).name('coil pitch').onChange(rebuild);
 gShape.add(P, 'daysPast', 0, 10, 1).name('days past').onChange(rebuild);
 gShape.add(P, 'daysFuture', 0, 6, 1).name('days future').onChange(rebuild);
 const gTime = gui.addFolder('time & layers');
-const nowCtrl = gTime.add(P, 'nowHour', -24, 72, 0.05).name('now (h)').onChange(rebuild);
-gTime.add(P, 'play');
+const nowCtrl = gTime.add(P, 'nowHour', -24, 72, 0.05).name('now (h)').onChange(() => { P.live = false; refreshGui(); rebuild(); });
+gTime.add(P, 'live').name('live clock').onChange(v => {
+  if (!v) return;
+  P.play = false; P.nowHour = liveHour(); refreshGui(); rebuild();
+});
+gTime.add(P, 'play').onChange(v => { if (v) { P.live = false; refreshGui(); } });
 gTime.add(P, 'speed', 0.1, 24, 0.1).name('speed (h/s)');
 gTime.add(P, 'showTasks').name('events').onChange(() => { invalidateContent(); build(); });
 gTime.add(P, 'showTicks').name('hour ticks').onChange(build);
@@ -922,15 +1108,29 @@ gPast.add(P, 'pastEdge', 0.25, 48, 0.25).name('fade range (h)').onChange(build);
 gPast.add(P, 'endFade', 0, 24, 0.25).name('end feather (h)').onChange(build);
 gui.add({ topDown() { P.tilt = 0; P.spin = 0; view.anim = false; updateCamera(); refreshGui(); } }, 'topDown').name('↓ top-down (2D view)');
 function refreshGui() { gui.controllersRecursive().forEach(c => c.updateDisplay()); }
+for (const b of viewButtons) b.addEventListener('click', () => {
+  if (b.dataset.view === view.to) return;
+  P.view = b.dataset.view; setView(P.view); rebuild(); refreshGui();
+});
+document.getElementById('hint').textContent = matchMedia('(pointer: coarse)').matches
+  ? 'drag to tilt and spin · pinch to zoom · tap for details'
+  : 'drag to tilt and spin · scroll to zoom · hover for details';
 
 // ---------------------------------------------------------------- go
 resize();
 rebuild();
+showView();
 const TRANSITION_S = 0.9;
 let last = performance.now();
 renderer.setAnimationLoop(t => {
   const dt = Math.min((t - last) / 1000, 0.1); last = t;
-  if (P.play) { P.nowHour += P.speed * dt; nowCtrl.updateDisplay(); }
+  let tick = false;
+  if (P.play) { P.nowHour += P.speed * dt; nowCtrl.updateDisplay(); tick = true; }
+  else if (P.live) {
+    // rebuild only when the minute shown in the readout changes
+    const h = liveHour();
+    if (Math.floor(h * 60) !== Math.floor(P.nowHour * 60)) { P.nowHour = h; nowCtrl.updateDisplay(); tick = true; }
+  }
   if (view.anim) {
     P.morph = Math.min(1, P.morph + dt / TRANSITION_S);
     P.tilt = THREE.MathUtils.lerp(view.tiltFrom, view.tiltTo, mixK());
@@ -938,7 +1138,7 @@ renderer.setAnimationLoop(t => {
     if (P.morph >= 1) view.anim = false;
     refreshGui();
   }
-  if (P.play) rebuild();
+  if (tick) rebuild();
   else if (view.anim) { applyMorph(); updateCamera(); }
   renderer.render(scene, camera);
   updateOverlay();
