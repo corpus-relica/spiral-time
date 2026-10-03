@@ -19,58 +19,110 @@
 <meta name="twitter:image" content="https://fusupo.github.io/spiral-time/og.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e0f13'/%3E%3Cpath d='M16.0 14.8 L16.6 14.6 L17.3 14.8 L17.9 15.3 L18.3 16.1 L18.3 17.1 L17.9 18.1 L17.0 18.9 L15.7 19.4 L14.3 19.2 L12.9 18.4 L12.0 17.1 L11.6 15.4 L11.9 13.6 L13.1 11.9 L14.8 10.9 L17.0 10.6 L19.2 11.2 L21.1 12.7 L22.3 14.9 L22.5 17.5 L21.6 20.1 L19.6 22.2 L17.0 23.4 L13.9 23.4 L11.0 22.2 L8.7 19.9 L7.5 16.7 L7.6 13.2 L9.2 10.0 L12.0 7.6 L15.6 6.4 L19.5 6.8 L23.1 8.7 L25.6 12.0 L26.7 16.1 L26.1 20.4 L23.7 24.2 L20.0 26.8 L15.4 27.8' fill='none' stroke='%23d9a441' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
-  html, body { margin: 0; height: 100%; background: #0e0f13; color: #c9c9d0;
-               font: 13px system-ui, sans-serif; overflow: hidden; }
+  :root { color-scheme: dark; --bg: #101216; --panel: #1b1e24; --line: #34383f;
+    --text: #eeeee9; --muted: #acb0b8; --amber: #e8b865; --radius: 12px; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.5 system-ui, sans-serif; overflow: hidden; }
+  ::selection { background: #e8b865; color: #101216; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+  button { font: inherit; }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline-offset: 4px; }
   #c { display: block; width: 100%; height: 100%; touch-action: none; }
   #overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
   .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform;
-         font-variant-numeric: tabular-nums; }
-  .lbl.hour { font: 500 12px system-ui, sans-serif; letter-spacing: .14em; color: #aeb2c2;
-              text-shadow: 0 0 3px #0e0f13, 0 0 6px #0e0f13, 0 0 10px #0e0f13; }
-  .lbl.day  { font: 600 11px system-ui, sans-serif; letter-spacing: .18em; color: #dcdee6;
-              text-shadow: 0 0 3px #0e0f13, 0 0 6px #0e0f13, 0 0 10px #0e0f13;
-              text-transform: uppercase; }
-  .lbl.task { font: 500 12px system-ui, sans-serif; color: #fff; letter-spacing: .01em;
-              text-shadow: 0 0 2px rgba(0,0,0,.95), 0 1px 3px rgba(0,0,0,.8); }
+    font-variant-numeric: tabular-nums; }
+  .lbl.hour { font-size: 11px; font-weight: 500; letter-spacing: .03em; color: #d5d8df;
+    text-shadow: 0 1px 3px #101216, 0 0 4px #101216; }
+  .lbl.day { font-size: 11px; font-weight: 650; letter-spacing: .07em; color: #eceeea;
+    text-transform: uppercase; padding: 3px 6px; border-radius: 4px; background: #101216e8; }
+  .lbl.day.today { color: var(--amber); }
+  .lbl.task { font-size: 12px; font-weight: 550; line-height: 1.3; color: #fff;
+    text-shadow: 0 1px 2px #000, 0 0 3px #000b; }
   .lbl.task.clip { overflow: hidden; text-overflow: ellipsis; }
-  .lbl.pt   { font: 600 11px system-ui, sans-serif; letter-spacing: .06em;
-              text-shadow: 0 0 3px #0e0f13, 0 0 6px #0e0f13, 0 0 10px #0e0f13; }
-  .lbl.icon { width: 16px; height: 16px; filter: drop-shadow(0 0 2px #0e0f13) drop-shadow(0 0 4px #0e0f13); }
-  .lbl.icon svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2;
-                  stroke-linecap: round; stroke-linejoin: round; }
-  #tip { position: fixed; pointer-events: none; display: none; background: rgba(16,17,22,.92); border: 1px solid #2b2c36;
-         border-radius: 6px; padding: 6px 9px; font-size: 12px; line-height: 1.4; color: #e8e8ee; max-width: 260px; z-index: 5; }
-  #tip .h { color: #8e92a3; font-size: 11px; letter-spacing: .06em; }
-  #tip .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
-  .lbl.now  { padding: 6px 11px 7px; color: #e8e8ee; line-height: 1.35; background: rgba(14,15,19,.78);
-              border: 1px solid rgba(255,255,255,.07); border-radius: 8px; backdrop-filter: blur(6px);
-              z-index: 2; }
-  .lbl.now .t  { font: 300 22px system-ui, sans-serif; letter-spacing: .05em; }
-  .lbl.now .n  { font: 400 13px system-ui, sans-serif; }
-  .lbl.now .u  { font: 400 11px system-ui, sans-serif; color: #8e92a3; letter-spacing: .04em; }
-  #hint { position: fixed; left: 16px; right: 16px; bottom: 12px; opacity: .5;
-          pointer-events: none; letter-spacing: .04em; font-size: 12px; }
-  #brand { position: fixed; left: 16px; top: 12px; font: 600 15px Georgia, serif;
-           letter-spacing: .02em; color: #d9a441; opacity: .85; text-decoration: none; }
-  #brand:hover { opacity: 1; }
-  #about { position: fixed; left: 16px; top: 36px; max-width: 320px; font-size: 12px; line-height: 1.45;
-           color: #8e92a3; pointer-events: none; }
-  #views { position: fixed; left: 16px; bottom: 36px; display: flex; gap: 2px;
-           padding: 3px; background: rgba(21,22,28,.85); border: 1px solid #2b2c36; border-radius: 8px; }
-  #views button { all: unset; cursor: pointer; padding: 7px 13px; border-radius: 5px;
-                  font: 500 11px system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #8e92a3; }
-  #views button:hover { color: #e8e8ee; }
-  #views button[aria-pressed="true"] { background: #2b2c36; color: #e2b04a; }
-  #views button:focus-visible { outline: 1px solid #e2b04a; }
+  #curves { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  #curves text { font-family: system-ui, sans-serif; font-weight: 550; fill: #fff; dominant-baseline: central;
+    paint-order: stroke; stroke: #000a; stroke-width: 3px; stroke-linejoin: round; }
+  .lbl.pt { font-size: 11px; font-weight: 550; text-shadow: 0 1px 3px #101216, 0 0 4px #101216; }
+  .lbl.icon { width: 16px; height: 16px; filter: drop-shadow(0 1px 2px #101216); }
+  .lbl.icon svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #tip { position: fixed; pointer-events: none; display: none; background: #20242b;
+    border-radius: var(--radius); padding: 12px 16px; font-size: 12px; line-height: 1.7;
+    color: var(--text); max-width: min(320px, calc(100vw - 24px)); z-index: 5;
+    box-shadow: 0 8px 28px #0006; }
+  #tip .h { color: #bec3cb; font-size: 11px; }
+  #tip > .h { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid #ffffff1a; }
+  #tip .sw { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 7px; }
+  .lbl.now { padding: 12px 16px; color: var(--text); line-height: 1.5; background: #20242b;
+    border-radius: var(--radius); box-shadow: 0 6px 24px #0005; z-index: 2; }
+  .lbl.now .t { font-size: 27px; font-weight: 450; letter-spacing: -.03em; color: var(--amber); line-height: 1.15; }
+  .lbl.now .n { font-size: 13px; font-weight: 550; margin-top: 6px; }
+  .lbl.now .u { font-size: 11px; color: #bec3cb; margin-top: 3px; }
+  #brand { position: fixed; left: 28px; top: 22px; font: 24px/1.2 Georgia, serif;
+    letter-spacing: -.03em; color: var(--amber); text-decoration: none; }
+  #brand:hover { color: #f5d29a; }
+  #date { position: fixed; left: 192px; top: 24px; padding-left: 24px; border-left: 1px solid var(--line);
+    font-size: 13px; color: var(--text); line-height: 24px; }
+  #about { position: fixed; left: 28px; top: 67px; max-width: 410px; font-size: 12px;
+    line-height: 1.6; color: var(--muted); pointer-events: none; }
+  #clock-state { position: fixed; top: 24px; right: 202px; display: flex; align-items: center; gap: 8px;
+    height: 40px; padding: 0 13px; border: 1px solid var(--line); border-radius: 8px;
+    color: var(--text); background: var(--bg); cursor: pointer; font-size: 12px; }
+  #clock-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+  #clock-state[data-live="true"]::before { background: #8ebfa1; }
+  #clock-state:hover { background: var(--panel); }
+  #legend { position: fixed; left: 28px; bottom: 38px; display: flex; flex-wrap: wrap; gap: 6px 16px;
+    color: var(--muted); font-size: 11px; max-width: 260px; }
+  #legend span { display: flex; align-items: center; gap: 6px; }
+  #legend i { width: 8px; height: 8px; border-radius: 2px; background: var(--swatch); }
+  #legend .sample { flex-basis: 100%; color: #8e949e; font-size: 11px; margin-top: 3px; }
+  #views { position: fixed; left: 50%; transform: translateX(-50%); bottom: 39px; display: flex; gap: 4px;
+    padding: 5px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  #views button { display: flex; align-items: center; gap: 8px; cursor: pointer; min-height: 42px;
+    padding: 0 16px; border: 0; border-radius: 7px; font-size: 12px; font-weight: 550;
+    color: var(--muted); background: transparent; transition: background .16s, color .16s; }
+  #views button:hover { background: #ffffff09; color: var(--text); }
+  #views button[aria-pressed="true"] { background: #e8b865; color: #211b11; }
+  #views svg, #zoom svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round; }
+  #hint { position: fixed; left: 50%; transform: translateX(-50%); bottom: 12px; white-space: nowrap;
+    color: var(--muted); pointer-events: none; font-size: 11px; }
+  #zoom { position: fixed; right: 28px; bottom: 44px; display: flex; border: 1px solid var(--line);
+    border-radius: 9px; background: var(--bg); overflow: hidden; }
+  #zoom button { display: grid; place-items: center; width: 40px; height: 40px; border: 0;
+    background: transparent; color: var(--muted); cursor: pointer; }
+  #zoom button:hover { color: var(--text); background: var(--panel); }
+  #zoom button:focus-visible { outline-offset: -4px; }
+  .lil-gui { --background-color: #1b1e24; --widget-color: #2a2f37; --hover-color: #343a44;
+    --focus-color: #414956; --text-color: #eeeee9; --title-background-color: #1b1e24;
+    --number-color: #e8b865; --string-color: #9acbbe; --font-size: 12px; --widget-height: 24px; }
+  .lil-gui.root { position: fixed; top: 24px; right: 28px; max-height: calc(100dvh - 125px);
+    border: 1px solid var(--line); border-radius: 8px; overflow: auto; scrollbar-width: thin; scrollbar-color: #555d69 #1b1e24; }
+  .lil-gui.root.closed { width: 158px; }
+  .lil-gui.root > .title { height: 38px; line-height: 38px; font-weight: 500; }
+  body:has(.lil-gui.root:not(.closed)) #clock-state { visibility: hidden; }
+  @media (max-width: 900px) { #legend { max-width: 160px; } #views button { padding: 0 12px; } }
   @media (max-width: 640px) {
-    #about { display: none; }
-    #hint { text-align: center; }
-    #views { left: 50%; transform: translateX(-50%); }
-    #views button { padding: 9px 11px; }
+    #brand { left: 18px; top: 19px; font-size: 23px; }
+    #date { left: 18px; top: 54px; border: 0; padding: 0; color: var(--muted); font-size: 12px; }
+    #about { left: 18px; right: 18px; top: 90px; max-width: 290px; font-size: 11px; }
+    #clock-state { top: 56px; right: 18px; height: 32px; padding: 0 9px; font-size: 11px; }
+    .lil-gui.root { top: 16px; right: 18px; max-width: calc(100vw - 36px); }
+    .lil-gui.root.closed { width: 130px; }
+    .lil-gui.root > .title { height: 32px; line-height: 32px; }
+    #legend { left: 18px; bottom: 116px; gap: 10px; max-width: none; font-size: 11px; }
+    #legend .sample { flex-basis: auto; margin: 0; }
+    #zoom { right: 18px; bottom: 155px; flex-direction: column; }
+    #zoom button { width: 44px; height: 44px; }
+    #views { bottom: max(43px, env(safe-area-inset-bottom)); width: calc(100% - 36px); justify-content: space-between; }
+    #views button { flex: 1; justify-content: center; flex-direction: column; gap: 3px; min-height: 48px; padding: 4px 8px; font-size: 11px; }
+    #views svg { width: 17px; height: 17px; }
+    #hint { bottom: 15px; font-size: 11px; }
+    .lbl.now { padding: 10px 12px; }
+    .lbl.now .t { font-size: 23px; }
   }
-  .lil-gui { --background-color: #15161c; --widget-color: #22232b; --hover-color: #2b2c36;
-             --focus-color: #33343f; --text-color: #c9c9d0; --title-background-color: #101116;
-             --number-color: #e2b04a; --string-color: #8fd3c9; --font-size: 11px; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
 </style>
 <script type="importmap">
 { "imports": {
@@ -80,13 +132,24 @@
 </script>
 </head>
 <body>
-<canvas id="c"></canvas>
+<canvas id="c" aria-label="Interactive calendar timeline"></canvas>
 <div id="overlay"></div>
 <a id="brand" href="https://github.com/fusupo/spiral-time" target="_blank" rel="noopener">spiral-time</a>
+<div id="date"></div>
 <div id="about"></div>
+<button id="clock-state" type="button" title="Return to the live clock"></button>
 <div id="tip"></div>
 <div id="views" role="group" aria-label="view">
-  <button data-view="spiral">spiral</button><button data-view="coil">coil</button><button data-view="linear">strip</button><button data-view="week">week</button>
+  <button data-view="spiral"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12c-2-3-6 0-4 3s8 2 9-3-5-9-10-6-6 11 0 14 14-1 14-9"/></svg>Spiral</button>
+  <button data-view="coil"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18C-1 7 7 2 9 8s-5 14-5 5S14 1 15 7s-5 14-5 5S21 1 22 7s-2 9-4 10"/></svg>Coil</button>
+  <button data-view="linear"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M9 7v10M15 7v10"/></svg>Strip</button>
+  <button data-view="week"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 8h16M9 8v13M15 8v13"/></svg>Week</button>
+</div>
+<div id="legend" aria-label="Calendar legend"><span><i style="--swatch:#8f86c6"></i>Sleep</span><span><i style="--swatch:#679cae"></i>Work</span><span><i style="--swatch:#e8b865"></i>Now</span><span class="sample">Sample calendar</span></div>
+<div id="zoom" role="group" aria-label="Timeline zoom">
+  <button type="button" id="zoom-out" aria-label="Zoom out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>
+  <button type="button" id="zoom-reset" aria-label="Reset view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg></button>
+  <button type="button" id="zoom-in" aria-label="Zoom in"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12"/></svg></button>
 </div>
 <div id="hint"></div>
 
@@ -109,8 +172,8 @@ const P = {
   growth:      'log',  // 'linear': turns equally spaced. 'log': each turn is a fixed multiple
                        // of the previous one, so the spiral is self-similar under scaling.
   coneAngle:   35,     // 0 = flat spiral in the screen plane, 90 = cylinder wall
-  turnSpacing: 1.2,    // distance between turn 0 and turn 1, measured along the cone surface
-  ribbonFill:  0.85,   // ribbon width as a fraction of the local turn spacing (1 = touching)
+  turnSpacing: 1.55,    // distance between turn 0 and turn 1, measured along the cone surface
+  ribbonFill:  0.9,   // ribbon width as a fraction of the local turn spacing (1 = touching)
   baseRadius:  6,      // radius of the ribbon centreline at s = 0 (today's midnight)
   coilPitch:   0.8,    // coil view: how far each day's loop advances, in loop diameters
   daysPast:    2,
@@ -132,7 +195,8 @@ const P = {
   labels:      true,   // hour / day labels and the now readout, as a screen-space overlay
   taskLabels:  true,   // task names riding on the ribbon
   icons:       true,   // sun, reminder and deadline icons as a screen-space overlay
-  labelDays:   1,      // task names only within this many days of now
+  curvedLabels: true,  // event names follow the ribbon's curve on the spiral and coil
+  labelDays:   3,      // task names only within this many days of now
   pastDim:     0.45,   // how much the past is darkened, 0..1
   pastDesat:   0.7,    // how much the past is desaturated, 0..1
   pastEdge:    12,     // hours over which the past treatment ramps up behind the marker
@@ -140,7 +204,8 @@ const P = {
 };
 
 // ---------------------------------------------------------------- helpers
-const BG = new THREE.Color('#0e0f13');
+const BG = new THREE.Color('#101216');
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const Z = new THREE.Vector3(0, 0, 1);
 const nowDay = () => P.nowHour / 24;
 // real time in hours since the load day's midnight, so it keeps counting past midnight
@@ -197,7 +262,8 @@ function sRange(F) {
 //   day  = which day segment s belongs to; only matters where the strip is cut at midnight
 // strip: the world-space [length, width] of one day of strip, which sizes the day textures.
 //   The flat and coil layouts widen the strip, which has more room there than on the spiral.
-// icon: on-screen size of the point icons in px
+// icon: on-screen size of the point icons in px; text: font size of event names in px
+// iconLabelLeft: put reminder names to the left of their icon, where the icon band is on the right
 // basePose: the camera orbit shared by all layouts, from tilt / spin / zoom around a target.
 // Distances are tuned for a landscape window; narrower ones back off so the width still fits.
 const FIT_ASPECT = 1.6;
@@ -218,7 +284,7 @@ function makeLayouts() {
   const vGap = 0.5 / P.ribbonFill;          // middle of the gap outside the strip
 
   const spiral = {
-    name: 'spiral', upright: false, defaultTilt: 0, F, range: [sMin, sMax], strip: [L, W], icon: 15,
+    name: 'spiral', upright: false, defaultTilt: 0, F, range: [sMin, sMax], strip: [L, W], icon: 15, text: 12,
     place(s, v, lift = 0) {
       let r, z;
       if (F.apex) {
@@ -238,7 +304,7 @@ function makeLayouts() {
     // scale the orbit about the cone apex by the similarity factor between turn 0 and now,
     // so the marker projects to the same screen point at every hour of every day
     camera() {
-      const pose = basePose(new THREE.Vector3(0, 0, 0), 20 / P.zoom, 1.25);   // round, so it needs less width
+      const pose = basePose(new THREE.Vector3(0, 0, 0), 25 / P.zoom, 1.1);   // round, so it needs less width
       if (P.followTime) {
         if (F.apex) {
           const k = F.scaleAt(sNow);
@@ -259,7 +325,7 @@ function makeLayouts() {
   // The ribbon lies flat in the loop plane, like a slinky, and lifts toward the camera.
   const pitch = P.coilPitch * 2 * P.baseRadius, Wc = W * 1.4;
   const coil = {
-    name: 'coil', upright: false, defaultTilt: 80, defaultSpin: -128.5, range: [sMin, sMax], strip: [L, Wc], icon: 16,
+    name: 'coil', upright: false, defaultTilt: 80, defaultSpin: -128.5, range: [sMin, sMax], strip: [L, Wc], icon: 16, text: 12,
     place(s, v, lift = 0) {
       const ph = 2 * Math.PI * s, r = P.baseRadius + v * Wc;    // midnight at the top (+z), clockwise as seen from the camera
       return new THREE.Vector3(r * Math.sin(ph), -s * pitch + lift, r * Math.cos(ph));
@@ -275,20 +341,20 @@ function makeLayouts() {
 
   const Wl = W * 2.6;
   const linear = {
-    name: 'linear', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [L, Wl], icon: 18,
+    name: 'linear', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [L, Wl], icon: 18, text: 13.5,
     place(s, v, lift = 0) { return new THREE.Vector3(s * L, v * Wl, lift); },
     anchorDay(d) { return this.place(d, vGap + 0.25); },
     anchorHour(s) { return this.place(s, vGap); },
     spoke() { return null; },
     camera() {
       const x = P.followTime ? sNow * L : 0;
-      return basePose(new THREE.Vector3(x, 0, 0), 17 / P.zoom * 1.5);
+      return basePose(new THREE.Vector3(x, 0, 0), 17 / P.zoom * 1.5, innerWidth < 640 ? 0.75 : FIT_ASPECT);
     },
   };
 
   const colW = 7, dayH = 18, i0 = Math.floor(sMin) - today, i1 = Math.floor(sMax) - today;
   const week = {
-    name: 'week', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [dayH, 0.9 * colW], icon: 16,
+    name: 'week', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [dayH, 0.9 * colW], icon: 16, text: 12.5, iconLabelLeft: true,
     // one column per day, time running down, today at x = 0
     place(s, v, lift = 0, day = Math.floor(s)) {
       return new THREE.Vector3((day - today) * colW + v * 0.9 * colW, -(s - day) * dayH, lift);
@@ -297,7 +363,8 @@ function makeLayouts() {
     anchorHour(s) { return new THREE.Vector3((i0 - 0.75) * colW, -(s - Math.floor(s)) * dayH, 0); },
     spoke() { return null; },
     camera() {
-      return basePose(new THREE.Vector3((i0 + i1) / 2 * colW, -dayH / 2, 0), 17 / P.zoom * 3);
+      const compact = innerWidth < 640;
+      return basePose(new THREE.Vector3(compact ? 0 : (i0 + i1) / 2 * colW, -dayH / 2, 0), 17 / P.zoom * 3, compact ? 0.7 : FIT_ASPECT);
     },
   };
 
@@ -316,7 +383,8 @@ function setView(name) {
   // turn the short way round
   const spinTo = LAY[name].defaultSpin || 0;
   view.spinFrom = P.spin; view.spinTo = P.spin + ((spinTo - P.spin) % 360 + 540) % 360 - 180;
-  P.morph = 0; view.anim = true;
+  P.morph = reducedMotion.matches ? 1 : 0; view.anim = !reducedMotion.matches;
+  if (reducedMotion.matches) { P.tilt = view.tiltTo; P.spin = view.spinTo; }
   showView();
 }
 
@@ -360,18 +428,18 @@ function shade(color, s, withFade = true) {
   const c = color.clone(), d = s - nowDay();
   if (d < 0) {
     const k = THREE.MathUtils.clamp(-d / Math.max(P.daysPast, 1), 0, 1);
-    c.lerp(BG, 0.7 * k);
+    c.lerp(BG, 0.5 * k);
   } else {
     const k = THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1);
-    c.multiplyScalar(THREE.MathUtils.lerp(1, 0.55, k));
+    c.multiplyScalar(THREE.MathUtils.lerp(1, 0.72, k));
   }
   if (withFade) c.lerp(BG, 1 - fadeAt(s));      // lines fade by sinking into the background
   return c;
 }
 function labelAlpha(s) {
   const d = s - nowDay();
-  if (d < 0) return THREE.MathUtils.lerp(0.85 * (1 - 0.6 * pastAt(s)), 0.12, THREE.MathUtils.clamp(-d / Math.max(P.daysPast, 1), 0, 1));
-  return THREE.MathUtils.lerp(0.85, 0.3, THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1));
+  return d < 0 ? THREE.MathUtils.lerp(1, 0.45, THREE.MathUtils.clamp(-d / Math.max(P.daysPast, 1), 0, 1))
+    : THREE.MathUtils.lerp(1, 0.65, THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1));
 }
 
 // ---------------------------------------------------------------- content
@@ -396,7 +464,7 @@ function texSpecFor(layout) {
 const WHITE = new THREE.Color(1, 1, 1);
 
 function withAlpha(hex, a) {
-  const c = new THREE.Color(hex);
+  const c = new THREE.Color(hex).convertLinearToSRGB();
   return `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
 }
 
@@ -470,7 +538,7 @@ function sampleContent(dayMin, dayMax) {
     if (!free) {
       const r = rngFor(k, 'work');
       const office = chance(r, 0.7), ws = between(r, 8.5, 9.5, 0.5), we = ws + between(r, 8, 9, 0.5);
-      at(d, 'context', ws, we, office ? 'At the office' : 'Working from home', office ? '#2c5f86' : '#2e6e60');
+      at(d, 'context', ws, we, office ? 'At the office' : 'Working from home', office ? '#426a7a' : '#426e63');
       if (chance(r, 0.9)) ev(9.5, 9.75, 'Standup', '#5fb0a6');
       const lunch = between(r, 12, 13), lunchEnd = lunch + pick(r, [0.5, 0.75, 1]);
       ev(lunch, lunchEnd, pick(r, ['Lunch', 'Lunch', 'Lunch', 'Team lunch', `Lunch with ${pick(r, FRIENDS)}`]), '#8a7a4a');
@@ -503,7 +571,7 @@ function sampleContent(dayMin, dayMax) {
     if (!late && chance(r, 0.18)) { const s = Math.max(between(r, 19, 20), gymEnd + 0.25); ev(s, s + 2, `Dinner with ${pick(r, FRIENDS)}`, '#a0604a'); late = s + 2; }
     else if (!late && chance(r, 0.55)) { const s = between(r, 20.5, 21.5); late = s + between(r, 1, 1.5); ev(s, late, 'Reading', '#6a4f5f'); }
     const bed = Math.max(between(r, 22.5, wk === 5 || wk === 6 ? 24.5 : 23.75), late + 0.25);
-    ranges.push({ s: d * 24 + bed, e: d * 24 + 24 + wakeAt(k + 1), kind: 'context', n: 'Sleep', c: '#3d3891', hatch: true });
+    ranges.push({ s: d * 24 + bed, e: d * 24 + 24 + wakeAt(k + 1), kind: 'context', n: 'Sleep', c: '#625b91', hatch: true });
 
     // walks
     const rw = rngFor(k, 'walks');
@@ -617,9 +685,9 @@ function drawDay(ctx, day) {
   const lighter = (c, l) => '#' + new THREE.Color(c).offsetHSL(0, 0.06, l).getHexString();
   const TAU = Math.PI * 2;
 
-  ctx.fillStyle = '#2b2e3a'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#373d49'; ctx.fillRect(0, 0, W, H);
   if (P.hourBands) {
-    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillStyle = 'rgba(255,255,255,0.035)';
     for (let h = 0; h < 24; h += 2) ctx.fillRect(h * px, 0, px, H);
   }
 
@@ -871,6 +939,23 @@ function build() {
 const overlay = document.getElementById('overlay');
 const labelPool = new Map();
 let labels = [];
+// Curved event names: SVG text on a path traced through the label's projected arc points.
+const SVGNS = 'http://www.w3.org/2000/svg';
+const curves = document.createElementNS(SVGNS, 'svg');
+curves.id = 'curves';
+const curveDefs = document.createElementNS(SVGNS, 'defs');
+curves.appendChild(curveDefs);
+overlay.appendChild(curves);
+let curveId = 0;
+function curveFor(L) {
+  const path = document.createElementNS(SVGNS, 'path'), text = document.createElementNS(SVGNS, 'text');
+  const tp = document.createElementNS(SVGNS, 'textPath');
+  path.id = 'cv' + curveId++;
+  tp.setAttribute('href', '#' + path.id); tp.setAttribute('startOffset', '50%'); tp.setAttribute('text-anchor', 'middle');
+  text.appendChild(tp); text.style.display = 'none';
+  curveDefs.appendChild(path); curves.appendChild(text);
+  return { path, text, tp, d: '', size: 0 };
+}
 
 function fmtHour(h) {
   const hod = ((h % 24) + 24) % 24;
@@ -898,7 +983,9 @@ function label(key, kind, html, spec) {
     L = { key, el, html: null };
     labelPool.set(key, L);
   }
-  if (L.html !== html) { L.el.innerHTML = html; L.html = html; L.width = null; }
+  L.el.classList.toggle('today', kind === 'day' && spec.s === Math.floor(nowDay()));
+  if (kind === 'task' && !L.svg) L.svg = curveFor(L);
+  if (L.html !== html) { L.el.innerHTML = html; L.html = html; L.width = null; if (L.svg) L.svg.tp.textContent = html; }
   Object.assign(L, spec, { kind, used: true });
   labels.push(L);
 }
@@ -920,7 +1007,7 @@ function buildLabels(sMin, sMax) {
       label('hour' + hh, 'hour', fmtHour(hh), { anchor: [A.anchorHour(s), B.anchorHour(s)], s });
     }
     for (let d = Math.ceil(sMin); d <= Math.floor(sMax); d++) {
-      label('day' + d, 'day', dayLabel(d), { anchor: [A.anchorDay(d), B.anchorDay(d)], s: d });
+      label('day' + d, 'day', d === dNow ? (innerWidth < 640 ? 'Today' : 'Today · ' + dayLabel(d)) : dayLabel(d), { anchor: [A.anchorDay(d), B.anchorDay(d)], s: d });
     }
     const cur = events.filter(t => P.nowHour >= t.s && P.nowHour < t.e).sort((a, b) => (a.e - a.s) - (b.e - b.s))[0];
     const curAll = alldays.find(t => P.nowHour >= t.s && P.nowHour < t.e);
@@ -950,14 +1037,14 @@ function buildLabels(sMin, sMax) {
         const arc = [];
         for (let i = 0; i <= 8; i++) arc.push(pair((a + (b - a) * i / 8) / 24, vc, 0.005, day));
         label('task' + t.s + t.n + day, 'task', t.n, {
-          anchor: arc[4], s: mid, tanA: arc[3], tanB: arc[5], arc,
+          anchor: arc[4], s: mid, tanA: arc[3], tanB: arc[5], arc, lanes: t.lanes,
           wIn: pair(mid, yToV(y1), 0, day), wOut: pair(mid, yToV(y0), 0, day),
         });
       }
     }
     for (const pt of content.data.points) {
       const s = pt.t / 24;
-      if (s < sMin || s > sMax || Math.abs(s - sNow) > P.labelDays || pt.kind === 'sun') continue;
+      if (s < sMin || s > sMax || Math.abs(s - sNow) > Math.min(P.labelDays, 1) || pt.kind === 'sun') continue;
       const day = Math.floor(s);
       // beside its icon when icons are on, otherwise just outside the outer edge
       const [i0, i1] = BAND.indicator;
@@ -975,7 +1062,10 @@ function buildLabels(sMin, sMax) {
     label('icon' + pt.t + pt.n, 'icon', ICONS[glyph], { anchor: pair(s, yToV((i0 + i1) / 2), 0.02, day), s, color: pt.c, icon: true });
   }
 
-  for (const [key, L] of labelPool) if (!L.used) { L.el.remove(); labelPool.delete(key); }
+  for (const [key, L] of labelPool) if (!L.used) {
+    L.el.remove(); if (L.svg) { L.svg.path.remove(); L.svg.text.remove(); }
+    labelPool.delete(key);
+  }
 }
 
 // 24-unit line icons, stroked in the point's colour
@@ -994,45 +1084,94 @@ function toScreen(p, w, h) {
 
 function updateOverlay() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
+  const candidates = [];
   const uprightK = THREE.MathUtils.lerp(LAY[view.from].upright ? 1 : 0, LAY[view.to].upright ? 1 : 0, mixK());
   for (const L of labels) {
-    const p = toScreen(mixV(L.anchor), w, h);
+    let p = toScreen(mixV(L.anchor), w, h);
+    // Keep the hour scale in the phone viewport when week columns extend beyond its edges.
+    if (w < 640 && view.to === 'week' && P.morph === 1 && L.kind === 'hour') p.x = 26;
     const el = L.el;
+    el.style.visibility = '';
     if (p.behind || p.x < -200 || p.x > w + 200 || p.y < -100 || p.y > h + 100) { el.style.display = 'none'; continue; }
-    let rot = 0, tx = -50, ty = -50, ox = 0, oy = 0, scale = 1, show = true;
+    let rot = 0, tx = -50, ty = -50, ox = 0, oy = 0, scale = 1, show = true, origin = '50% 50%';
+    L.caps = null; L.curve = null;
+    if (L.svg) L.svg.text.style.display = 'none';
 
     if (L.icon) {
       scale = THREE.MathUtils.lerp(LAY[view.from].icon, LAY[view.to].icon, mixK()) / 16;
     } else if (L.besideIcon) {
-      tx = 0; ox = THREE.MathUtils.lerp(LAY[view.from].icon, LAY[view.to].icon, mixK()) * 0.7;
+      const left = LAY[mixK() < 0.5 ? view.from : view.to].iconLabelLeft;
+      ox = THREE.MathUtils.lerp(LAY[view.from].icon, LAY[view.to].icon, mixK()) * (left ? -0.8 : 0.8);
+      tx = left ? -100 : 0;
     } else if (L.kind === 'task') {
-      // rotate along the strip's projected tangent, keep text reading left to right,
-      // and relax toward upright in the flat layouts
-      const ta = toScreen(mixV(L.tanA), w, h), tb = toScreen(mixV(L.tanB), w, h);
-      rot = Math.atan2(tb.y - ta.y, tb.x - ta.x) * 180 / Math.PI;
-      if (rot > 90) rot -= 180; else if (rot < -90) rot += 180;
-      rot *= 1 - uprightK;
-      // size with the projected height of the event's lane, within readable limits
-      const wi = toScreen(mixV(L.wIn), w, h), wo = toScreen(mixV(L.wOut), w, h);
-      const lanePx = Math.hypot(wo.x - wi.x, wo.y - wi.y);
-      scale = THREE.MathUtils.clamp(lanePx / 22, 0.85, 1.3);
-      // room for the text: the strip's extent along the text direction (arc chord or strip
-      // width, whichever runs that way) must fit the text, and across it must fit a line
+      // One type size per layout, a step smaller for events sharing their lane, so names read as a
+      // set rather than each sized to its own block.
+      const size = THREE.MathUtils.lerp(LAY[view.from].text, LAY[view.to].text, mixK()) * (L.lanes > 1 ? 0.9 : 1);
+      scale = size / 12;
+      const lineH = size * 1.3, pad = 7;
       const c0 = toScreen(mixV(L.arc[0]), w, h), c1 = toScreen(mixV(L.arc[8]), w, h);
-      const r = rot * Math.PI / 180, dx = Math.cos(r), dy = Math.sin(r);
-      const along  = Math.max(Math.abs((c1.x - c0.x) * dx + (c1.y - c0.y) * dy), Math.abs((wo.x - wi.x) * dx + (wo.y - wi.y) * dy));
-      const across = Math.max(Math.abs(-(c1.x - c0.x) * dy + (c1.y - c0.y) * dx), Math.abs(-(wo.x - wi.x) * dy + (wo.y - wi.y) * dx));
-      if (L.width == null) { el.style.display = ''; L.width = el.offsetWidth || 1; }
-      if (uprightK > 0.5) {
-        // upright text shrinks a little to fit its lane, then truncates with an ellipsis
-        scale = Math.max(0.85, Math.min(scale, (along - 8) / L.width));
-        const maxW = (along - 8) / scale, clip = maxW < L.width;
-        el.style.maxWidth = clip ? maxW.toFixed(0) + 'px' : '';
+      const wi = toScreen(mixV(L.wIn), w, h), wo = toScreen(mixV(L.wOut), w, h);
+      if (L.width == null) { el.style.display = ''; el.style.maxWidth = ''; el.classList.remove('clip'); L.width = el.offsetWidth || 1; }
+      const textW = L.width * scale;
+      if (P.curvedLabels && uprightK <= 0.5) {
+        // set on a path through the projected arc, centred in the block, reading left to right;
+        // shown only when the whole name fits along the path and a line fits across the lane
+        const pts = L.arc.map(q => toScreen(mixV(q), w, h)), m = pts.length >> 1;
+        if (pts[m + 1].x < pts[m - 1].x) pts.reverse();
+        const cum = [0];
+        for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+        const len = cum[cum.length - 1];
+        show = len >= textW + 2 * pad && Math.hypot(wo.x - wi.x, wo.y - wi.y) >= lineH;
+        if (show) {
+          let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+          for (let i = 1; i < pts.length - 1; i++) {
+            const q = pts[i], n = pts[i + 1];
+            d += `Q${q.x.toFixed(1)},${q.y.toFixed(1)} ${((q.x + n.x) / 2).toFixed(1)},${((q.y + n.y) / 2).toFixed(1)}`;
+          }
+          d += `L${pts[pts.length - 1].x.toFixed(1)},${pts[pts.length - 1].y.toFixed(1)}`;
+          // footprint for the overlap pass: points along the middle stretch the text occupies
+          const r = lineH * 0.42, at = t => {
+            let i = 1; while (i < cum.length - 1 && cum[i] < t) i++;
+            const k = (t - cum[i - 1]) / ((cum[i] - cum[i - 1]) || 1);
+            return [pts[i - 1].x + (pts[i].x - pts[i - 1].x) * k, pts[i - 1].y + (pts[i].y - pts[i - 1].y) * k];
+          };
+          const foot = [];
+          for (let t = len / 2 - textW / 2 + r; t <= len / 2 + textW / 2 - r + 1e-6; t += r) foot.push(at(t));
+          if (!foot.length) foot.push(at(len / 2));
+          const xs = foot.map(f => f[0]), ys = foot.map(f => f[1]);
+          L.curve = { d, size, caps: { pts: foot, r },
+            box: { left: Math.min(...xs) - r, right: Math.max(...xs) + r, top: Math.min(...ys) - r, bottom: Math.max(...ys) + r } };
+        }
+      } else if (uprightK > 0.5) {
+        // calendar style: upright and left-aligned at the block's start, truncated only while
+        // a useful part of the name still fits
+        const horizontal = Math.abs(c1.x - c0.x) >= Math.abs(c1.y - c0.y);
+        let room, depth;
+        if (horizontal) {       // time runs across: start at the left end, centred in the lane
+          p = { x: Math.min(c0.x, c1.x) + pad + 4, y: (c0.y + c1.y) / 2 }; tx = 0; ty = -50; origin = '0 50%';
+          room = Math.abs(c1.x - c0.x) - 2 * pad - 4; depth = Math.abs(wo.y - wi.y);
+        } else {                // time runs down: top left corner, or centred when only a line tall
+          const top = Math.min(c0.y, c1.y), tall = Math.abs(c1.y - c0.y);
+          const roomy = tall >= lineH + 10;
+          p = { x: Math.min(wi.x, wo.x) + pad, y: roomy ? top + 5 : top + tall / 2 }; tx = 0; ty = roomy ? 0 : -50; origin = roomy ? '0 0' : '0 50%';
+          room = Math.abs(wo.x - wi.x) - 2 * pad; depth = tall;
+        }
+        const clip = room < textW;
+        el.style.maxWidth = clip ? Math.max(0, room / scale).toFixed(0) + 'px' : '';
         el.classList.toggle('clip', clip);
-        show = along > 28 && across > 9 * scale;
+        show = room >= Math.min(textW, 64) && depth >= lineH;
       } else {
+        // along the ribbon, centred in the block, keeping text reading left to right; shown
+        // only when the whole name fits, never cut short on a curve
+        const ta = toScreen(mixV(L.tanA), w, h), tb = toScreen(mixV(L.tanB), w, h);
+        rot = Math.atan2(tb.y - ta.y, tb.x - ta.x) * 180 / Math.PI;
+        if (rot > 90) rot -= 180; else if (rot < -90) rot += 180;
+        const r = rot * Math.PI / 180, dx = Math.cos(r), dy = Math.sin(r);
+        const along  = Math.max(Math.abs((c1.x - c0.x) * dx + (c1.y - c0.y) * dy), Math.abs((wo.x - wi.x) * dx + (wo.y - wi.y) * dy));
+        const across = Math.max(Math.abs(-(c1.x - c0.x) * dy + (c1.y - c0.y) * dx), Math.abs(-(wo.x - wi.x) * dy + (wo.y - wi.y) * dx));
         el.style.maxWidth = ''; el.classList.remove('clip');
-        show = along > L.width * scale + 8 && across > 12 * scale;
+        show = along >= textW + 2 * pad && across >= lineH;
+        L.caps = { cx: p.x, cy: p.y, dx, dy, half: textW / 2, r: lineH * 0.42 };
       }
     } else if (L.callout) {
       // push the readout outward across the strip, anchor its near corner
@@ -1053,12 +1192,59 @@ function updateOverlay() {
       }
     }
 
+    if (L.callout && w < 640 && h > 680) {
+      p.x = w / 2; p.y = 148; ox = oy = 0; tx = -50; ty = 0;
+    }
+    if (L.svg && (L.curve || (P.curvedLabels && uprightK <= 0.5))) {
+      el.style.display = 'none';
+      if (!show) continue;
+      const c = L.svg, t = c.text;
+      if (c.d !== L.curve.d) { c.path.setAttribute('d', L.curve.d); c.d = L.curve.d; }
+      if (c.size !== L.curve.size) { t.setAttribute('font-size', L.curve.size.toFixed(2)); c.size = L.curve.size; }
+      t.style.display = '';
+      t.style.opacity = (labelAlpha(L.s) * fadeAt(L.s)).toFixed(3);
+      candidates.push(L);
+      continue;
+    }
     el.style.display = show ? '' : 'none';
     if (!show) continue;
     el.style.opacity = L.callout ? 1 : (Math.min(1, labelAlpha(L.s) * (L.icon ? 1.2 : 1)) * fadeAt(L.s)).toFixed(3);
     if (L.color) el.style.color = L.color;
+    el.style.transformOrigin = origin;
     el.style.transform = `translate(${(p.x + ox).toFixed(1)}px, ${(p.y + oy).toFixed(1)}px) translate(${tx}%, ${ty}%) rotate(${rot.toFixed(1)}deg) scale(${scale.toFixed(3)})`;
+    candidates.push(L);
   }
+  // Overlap pass, in priority order: the readout, day and hour labels, event names nearest now,
+  // then icons and reminder names. Upright labels are tested by their boxes; names rotated along
+  // the ribbon by a capsule along their baseline, since their bounding boxes claim far more room
+  // than the text uses.
+  const placed = ['brand', 'date', 'about', 'clock-state', 'views', 'legend', 'zoom', 'hint']
+    .map(id => ({ box: document.getElementById(id).getBoundingClientRect() }));
+  placed.push({ box: gui.domElement.getBoundingClientRect() });
+  const priority = L => L.callout ? 0 : L.kind === 'day' ? (L.s === Math.floor(nowDay()) ? 0.5 : 1) : L.kind === 'hour' ? 2 : L.kind === 'task' ? 3 : L.icon ? 3.5 : 4;
+  const measured = candidates.map(L => ({ L, box: L.curve ? L.curve.box : L.el.getBoundingClientRect() }))
+    .sort((a, b) => priority(a.L) - priority(b.L) || Math.abs(a.L.s - nowDay()) - Math.abs(b.L.s - nowDay()));
+  for (const { L, box } of measured) {
+    const shape = L.curve ? { caps: L.curve.caps } : L.caps ? { caps: capsule(L.caps) } : { box };
+    const clipped = box.left < 6 || box.right > w - 6 || box.top < 6 || box.bottom > h - 6;
+    const hide = !L.callout && (clipped || placed.some(o => collide(shape, o)));
+    (L.curve ? L.svg.text : L.el).style.visibility = hide ? 'hidden' : '';
+    if (!hide) placed.push(shape);
+  }
+}
+
+function capsule({ cx, cy, dx, dy, half, r }) {
+  const n = Math.max(2, Math.ceil(2 * half / r)), pts = [];
+  for (let i = 0; i < n; i++) { const t = -half + r + (2 * (half - r)) * i / (n - 1); pts.push([cx + dx * t, cy + dy * t]); }
+  return { pts, r };
+}
+function collide(a, b, m = 3) {
+  const boxBox = (p, q) => p.left < q.right + m && p.right > q.left - m && p.top < q.bottom + m && p.bottom > q.top - m;
+  const capsBox = (c, q) => c.pts.some(([x, y]) => x > q.left - c.r && x < q.right + c.r && y > q.top - c.r && y < q.bottom + c.r);
+  const capsCaps = (c, d) => c.pts.some(([x, y]) => d.pts.some(([u, v]) => Math.hypot(x - u, y - v) < c.r + d.r));
+  if (a.box && b.box) return boxBox(a.box, b.box);
+  if (a.caps && b.caps) return capsCaps(a.caps, b.caps);
+  return a.caps ? capsBox(a.caps, b.box) : capsBox(b.caps, a.box);
 }
 
 // ---------------------------------------------------------------- camera
@@ -1074,7 +1260,7 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  if (LAY) updateCamera();
+  if (LAY) { build(); updateCamera(); updateClockState(); }
 }
 addEventListener('resize', resize);
 
@@ -1126,8 +1312,8 @@ function hover(e) {
   if (y >= BAND.series[0] && y < BAND.series[1]) for (const sr of series) html += `<div><span class="sw" style="background:${sr.c}"></span>${sr.n} <span class="h">${Math.round(sr.at(t) * 100)}%</span></div>`;
   tip.innerHTML = html;
   tip.style.display = 'block';
-  tip.style.left = Math.min(e.clientX + 14, w - 280) + 'px';
-  tip.style.top = Math.min(e.clientY + 14, h - 120) + 'px';
+  tip.style.left = Math.max(12, Math.min(e.clientX + 14, w - tip.offsetWidth - 12)) + 'px';
+  tip.style.top = Math.max(12, Math.min(e.clientY + 14, h - tip.offsetHeight - 12)) + 'px';
 }
 
 canvas.addEventListener('pointermove', e => {
@@ -1158,7 +1344,7 @@ canvas.addEventListener('wheel', e => {
 
 // ---------------------------------------------------------------- gui
 const rebuild = () => { build(); updateCamera(); };
-const gui = new GUI({ title: 'settings' }).close();
+const gui = new GUI({ title: 'Display settings', width: 280 }).close();
 const gView = gui.addFolder('view');
 gView.add(P, 'view', ['spiral', 'coil', 'linear', 'week']).onChange(n => { setView(n); rebuild(); });
 gView.add(P, 'morph', 0, 1, 0.001).name('transition').onChange(() => { view.anim = false; applyMorph(); updateCamera(); });
@@ -1191,6 +1377,7 @@ gTime.add(P, 'hourBands').name('hour bands').onChange(() => { invalidateContent(
 gTime.add(P, 'labels').name('labels').onChange(build);
 gTime.add(P, 'taskLabels').name('event labels').onChange(build);
 gTime.add(P, 'icons').onChange(() => { invalidateContent(); build(); });
+gTime.add(P, 'curvedLabels').name('curved labels');
 gTime.add(P, 'labelDays', 0.25, 4, 0.25).name('label range (d)').onChange(build);
 const gPast = gui.addFolder('past');
 gPast.add(P, 'pastDim', 0, 1, 0.01).name('dim').onChange(v => pastUniforms.dim.value = v);
@@ -1198,7 +1385,27 @@ gPast.add(P, 'pastDesat', 0, 1, 0.01).name('desaturate').onChange(v => pastUnifo
 gPast.add(P, 'pastEdge', 0.25, 48, 0.25).name('fade range (h)').onChange(build);
 gPast.add(P, 'endFade', 0, 24, 0.25).name('end feather (h)').onChange(build);
 gui.add({ topDown() { P.tilt = 0; P.spin = 0; view.anim = false; updateCamera(); refreshGui(); } }, 'topDown').name('↓ top-down (2D view)');
-function refreshGui() { gui.controllersRecursive().forEach(c => c.updateDisplay()); }
+function refreshGui() { gui.controllersRecursive().forEach(c => c.updateDisplay()); updateClockState(); }
+function updateClockState() {
+  const el = document.getElementById('clock-state');
+  el.textContent = P.live ? 'Live' : P.play ? 'Playing · Go live' : 'Go live';
+  el.dataset.live = P.live;
+  el.setAttribute('aria-label', P.live ? 'Live clock active' : 'Return to the live clock');
+  const currentDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + Math.floor(nowDay()));
+  document.getElementById('date').textContent = currentDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+document.getElementById('clock-state').addEventListener('click', () => {
+  P.live = true; P.play = false; P.nowHour = liveHour(); rebuild(); refreshGui();
+});
+for (const [id, factor] of [['zoom-in', 1.2], ['zoom-out', 1 / 1.2]]) {
+  document.getElementById(id).addEventListener('click', () => {
+    P.zoom = THREE.MathUtils.clamp(P.zoom * factor, 0.2, 4); updateCamera(); refreshGui();
+  });
+}
+document.getElementById('zoom-reset').addEventListener('click', () => {
+  P.zoom = 1; P.tilt = LAY[view.to].defaultTilt; P.spin = LAY[view.to].defaultSpin || 0;
+  P.morph = 1; view.anim = false; rebuild(); refreshGui();
+});
 for (const b of viewButtons) b.addEventListener('click', () => {
   if (b.dataset.view === view.to) return;
   P.view = b.dataset.view; setView(P.view); rebuild(); refreshGui();
@@ -1211,6 +1418,7 @@ document.getElementById('hint').textContent = matchMedia('(pointer: coarse)').ma
 resize();
 rebuild();
 showView();
+updateClockState();
 const TRANSITION_S = 0.9;
 let last = performance.now();
 renderer.setAnimationLoop(t => {
@@ -1222,6 +1430,7 @@ renderer.setAnimationLoop(t => {
     const h = liveHour();
     if (Math.floor(h * 60) !== Math.floor(P.nowHour * 60)) { P.nowHour = h; nowCtrl.updateDisplay(); tick = true; }
   }
+  const wasAnimating = view.anim;
   if (view.anim) {
     P.morph = Math.min(1, P.morph + dt / TRANSITION_S);
     P.tilt = THREE.MathUtils.lerp(view.tiltFrom, view.tiltTo, mixK());
@@ -1229,8 +1438,8 @@ renderer.setAnimationLoop(t => {
     if (P.morph >= 1) view.anim = false;
     refreshGui();
   }
-  if (tick) rebuild();
-  else if (view.anim) { applyMorph(); updateCamera(); }
+  if (tick) { rebuild(); updateClockState(); }
+  else if (wasAnimating) { applyMorph(); updateCamera(); }
   renderer.render(scene, camera);
   updateOverlay();
   if (query.has('debug')) {
