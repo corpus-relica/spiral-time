@@ -199,7 +199,17 @@ const P = {
   labelDays:   3,      // task names only within this many days of now
   pastDim:     0.45,   // how much the past is darkened, 0..1
   pastDesat:   0.7,    // how much the past is desaturated, 0..1
-  pastEdge:    12,     // hours over which the past treatment ramps up behind the marker
+  pastEdge:    3,      // hours over which the past treatment ramps up behind the present
+  presentBehind: 3,    // hours behind the marker still shown at full strength: today...
+  presentSpan: 15,     // ...through this many hours ahead of it
+  nowBehind:   1,      // the "now" focus inside today: from this many hours behind the marker...
+  nowAhead:    3,      // ...to this many ahead, marked by amber ribbon edges and a little extra light
+  nowLift:     0.1,    // extra brightness on the now stretch, 0..1
+  nowEdges:    true,
+  futureEdge:  3,      // hours over which the future treatment ramps up after the present
+  futureDim:   0.3,    // how much the future beyond the present is darkened, 0..1
+  futureDesat: 0.45,   // how much the future beyond the present is desaturated, 0..1
+  presentLift: 0.12,   // extra brightness on the present, 0..1
   endFade:     6,      // hours of feathering at both ends of the ribbon; the past end is extended by this
 };
 
@@ -263,6 +273,7 @@ function sRange(F) {
 // strip: the world-space [length, width] of one day of strip, which sizes the day textures.
 //   The flat and coil layouts widen the strip, which has more room there than on the spiral.
 // icon: on-screen size of the point icons in px; text: font size of event names in px
+// edgeW: width of the amber now edges, as a fraction of the strip width
 // iconLabelLeft: put reminder names to the left of their icon, where the icon band is on the right
 // basePose: the camera orbit shared by all layouts, from tilt / spin / zoom around a target.
 // Distances are tuned for a landscape window; narrower ones back off so the width still fits.
@@ -284,7 +295,7 @@ function makeLayouts() {
   const vGap = 0.5 / P.ribbonFill;          // middle of the gap outside the strip
 
   const spiral = {
-    name: 'spiral', upright: false, defaultTilt: 0, F, range: [sMin, sMax], strip: [L, W], icon: 15, text: 12,
+    name: 'spiral', upright: false, defaultTilt: 0, F, range: [sMin, sMax], strip: [L, W], icon: 15, text: 12, edgeW: 0.04,
     place(s, v, lift = 0) {
       let r, z;
       if (F.apex) {
@@ -325,7 +336,7 @@ function makeLayouts() {
   // The ribbon lies flat in the loop plane, like a slinky, and lifts toward the camera.
   const pitch = P.coilPitch * 2 * P.baseRadius, Wc = W * 1.4;
   const coil = {
-    name: 'coil', upright: false, defaultTilt: 80, defaultSpin: -128.5, range: [sMin, sMax], strip: [L, Wc], icon: 16, text: 12,
+    name: 'coil', upright: false, defaultTilt: 80, defaultSpin: -128.5, range: [sMin, sMax], strip: [L, Wc], icon: 16, text: 12, edgeW: 0.025,
     place(s, v, lift = 0) {
       const ph = 2 * Math.PI * s, r = P.baseRadius + v * Wc;    // midnight at the top (+z), clockwise as seen from the camera
       return new THREE.Vector3(r * Math.sin(ph), -s * pitch + lift, r * Math.cos(ph));
@@ -341,7 +352,7 @@ function makeLayouts() {
 
   const Wl = W * 2.6;
   const linear = {
-    name: 'linear', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [L, Wl], icon: 18, text: 13.5,
+    name: 'linear', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [L, Wl], icon: 18, text: 13.5, edgeW: 0.015,
     place(s, v, lift = 0) { return new THREE.Vector3(s * L, v * Wl, lift); },
     anchorDay(d) { return this.place(d, vGap + 0.25); },
     anchorHour(s) { return this.place(s, vGap); },
@@ -354,7 +365,7 @@ function makeLayouts() {
 
   const colW = 7, dayH = 18, i0 = Math.floor(sMin) - today, i1 = Math.floor(sMax) - today;
   const week = {
-    name: 'week', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [dayH, 0.9 * colW], icon: 16, text: 12.5, iconLabelLeft: true,
+    name: 'week', upright: true, defaultTilt: 0, range: [sMin, sMax], strip: [dayH, 0.9 * colW], icon: 16, text: 12.5, edgeW: 0.03, iconLabelLeft: true,
     // one column per day, time running down, today at x = 0
     place(s, v, lift = 0, day = Math.floor(s)) {
       return new THREE.Vector3((day - today) * colW + v * 0.9 * colW, -(s - day) * dayH, lift);
@@ -395,8 +406,8 @@ function showView() {
   for (const b of viewButtons) b.setAttribute('aria-pressed', b.dataset.view === view.to);
   about.textContent = {
     spiral: P.flow === 'inward'
-      ? 'One turn per day, midnight at the top, clockwise. The future spirals inward, the past falls off the edge.'
-      : 'One turn per day, midnight at the top, clockwise. The future spirals outward, the past descends into the well.',
+      ? 'One turn per day, midnight at the top. The future emerges from the center, the past fades away at the edges.'
+      : 'One turn per day, midnight at the top. The future emerges from the edges, the past fades away into the center.',
     coil:   'One loop per day. The future recedes into the distance, the past comes toward you.',
     linear: 'The same ribbon, unrolled. Time runs left to right.',
     week:   'The ribbon cut at midnight, one column per day. Time runs down.',
@@ -411,13 +422,24 @@ const _m = new THREE.Vector3();
 function mixV(p) { return _m.copy(p[0]).lerp(p[1], mixK()); }
 
 // ---------------------------------------------------------------- shading
-// Distance shading relative to now: the past fades toward the background as it leaves,
-// the future darkens the further off it is. The "done" treatment of the past (dim +
-// desaturate, with a soft edge just behind the marker) is a per-vertex amount, pastAt(s),
-// applied in the ribbon's fragment shader so it can desaturate the texture.
+// Three strata relative to now. The present, a span around the marker that moves with it, is
+// shown at full strength and lifted slightly. The past behind it is done: dimmed and
+// desaturated past a soft edge, then fading toward the background as it leaves. The future beyond it
+// is still coloured but steps back, partly dimmed and desaturated. The past and future amounts,
+// pastAt(s) and futureAt(s), are per-vertex and applied in the ribbon's fragment shader so they
+// can desaturate the texture.
 function pastAt(s) {
-  const edge = P.pastEdge / 24;
-  return 1 - THREE.MathUtils.smoothstep(s, nowDay() - edge, nowDay());
+  const a = nowDay() - P.presentBehind / 24;
+  return 1 - THREE.MathUtils.smoothstep(s, a - P.pastEdge / 24, a);
+}
+// the now stretch: eases in over the hour behind the marker and out toward its far end
+function nowAt(s) {
+  const t = (s - nowDay()) * 24;
+  return THREE.MathUtils.smoothstep(t, -P.nowBehind, -P.nowBehind / 4) * (1 - THREE.MathUtils.smoothstep(t, P.nowAhead * 0.75, P.nowAhead));
+}
+function futureAt(s) {
+  const a = nowDay() + P.presentSpan / 24;
+  return THREE.MathUtils.smoothstep(s, a, a + P.futureEdge / 24);
 }
 // end feather: 0 at the ribbon's ends, 1 inside, ramping over endFade hours
 function fadeAt(s) {
@@ -431,15 +453,15 @@ function shade(color, s, withFade = true) {
     c.lerp(BG, 0.5 * k);
   } else {
     const k = THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1);
-    c.multiplyScalar(THREE.MathUtils.lerp(1, 0.72, k));
+    c.multiplyScalar(THREE.MathUtils.lerp(1, 0.72, k) * (1 - P.futureDim * futureAt(s)));
   }
   if (withFade) c.lerp(BG, 1 - fadeAt(s));      // lines fade by sinking into the background
   return c;
 }
 function labelAlpha(s) {
   const d = s - nowDay();
-  return d < 0 ? THREE.MathUtils.lerp(1, 0.45, THREE.MathUtils.clamp(-d / Math.max(P.daysPast, 1), 0, 1))
-    : THREE.MathUtils.lerp(1, 0.65, THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1));
+  return d < 0 ? THREE.MathUtils.lerp(1, 0.45, THREE.MathUtils.clamp(-d / Math.max(P.daysPast, 1), 0, 1)) * (1 - 0.3 * pastAt(s))
+    : THREE.MathUtils.lerp(1, 0.65, THREE.MathUtils.clamp(d / Math.max(P.daysFuture, 1), 0, 1)) * (1 - 0.3 * futureAt(s));
 }
 
 // ---------------------------------------------------------------- content
@@ -585,7 +607,7 @@ function sampleContent(dayMin, dayMax) {
     const date = new Date(k * 864e5), doy = (k - Date.UTC(date.getUTCFullYear(), 0, 1) / 864e5);
     const daylight = 12 + 3.1 * Math.sin(2 * Math.PI * (doy - 80) / 365.25);
     points.push({ t: b + 12.6 - daylight / 2, kind: 'sun', c: '#e2b04a', n: 'Sunrise' });
-    points.push({ t: b + 12.6 + daylight / 2, kind: 'sun', c: '#e2b04a', n: 'Sunset' });
+    points.push({ t: b + 12.6 + daylight / 2, kind: 'sun', c: '#b3b0ff', n: 'Sunset' });
     points.push({ t: b + 8.5, kind: 'reminder', c: '#8fd3c9', n: 'Take meds' });
     if (date.getUTCDate() === 1) points.push({ t: b + 10, kind: 'reminder', c: '#8fd3c9', n: 'Pay rent' });
     if (!free && chance(rp, 0.12)) points.push({ t: b + pick(rp, [12, 17]), kind: 'deadline', c: '#e0574f',
@@ -634,7 +656,11 @@ function eventBox(r) {
 const yToV = y => 0.5 - y;            // texture fraction from the outer edge -> strip lane
 
 const content = { data: sampleContent(-16, 16), tex: new Map() };
-const pastUniforms = { dim: { value: P.pastDim }, desat: { value: P.pastDesat } };
+const strata = {
+  pastDim: { value: P.pastDim }, pastDesat: { value: P.pastDesat },
+  futureDim: { value: P.futureDim }, futureDesat: { value: P.futureDesat }, presentLift: { value: P.presentLift },
+  nowLift: { value: P.nowLift },
+};
 // ?strip: stack the day textures at the bottom of the page, most recent day at the bottom
 function layoutStrips() {
   const cvs = [...document.querySelectorAll('canvas[data-day]')].sort((a, b) => a.dataset.day - b.dataset.day);
@@ -660,14 +686,20 @@ function dayMaterial(day) {
     transparent: true,
   });
   mat.onBeforeCompile = sh => {
-    sh.uniforms.pastDim = pastUniforms.dim;
-    sh.uniforms.pastDesat = pastUniforms.desat;
+    Object.assign(sh.uniforms, strata);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float past; attribute float fade; varying float vPast; varying float vFade;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPast = past; vFade = fade;');
+      .replace('#include <common>', '#include <common>\nattribute float past; attribute float future; attribute float focus; attribute float fade; varying float vPast; varying float vFuture; varying float vFocus; varying float vFade;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPast = past; vFuture = future; vFocus = focus; vFade = fade;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float pastDim; uniform float pastDesat; varying float vPast; varying float vFade;')
-      .replace('#include <map_fragment>', '#include <map_fragment>\n{ float l = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)); diffuseColor.rgb = mix(diffuseColor.rgb, vec3(l), vPast * pastDesat) * (1.0 - vPast * pastDim); diffuseColor.a *= vFade; }')
+      .replace('#include <common>', '#include <common>\nuniform float pastDim; uniform float pastDesat; uniform float futureDim; uniform float futureDesat; uniform float presentLift; uniform float nowLift; varying float vPast; varying float vFuture; varying float vFocus; varying float vFade;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+{
+  float l = dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114));
+  float present = (1.0 - vPast) * (1.0 - vFuture);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(l), clamp(vPast * pastDesat + vFuture * futureDesat, 0.0, 1.0));
+  diffuseColor.rgb *= (1.0 - vPast * pastDim) * (1.0 - vFuture * futureDim) * (1.0 + present * presentLift + vFocus * nowLift);
+  diffuseColor.a *= vFade;
+}`)
       // part unlit, so the ribbon shows the colours it was painted with and lighting only models it
       .replace('#include <opaque_fragment>', 'outgoingLight = mix(outgoingLight, diffuseColor.rgb, 0.4);\n#include <opaque_fragment>');
   };
@@ -804,6 +836,9 @@ const tickMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: t
 const nowMat  = new THREE.LineBasicMaterial({ color: '#f39a2b' });
 const postMat = new THREE.LineBasicMaterial({ color: '#f39a2b', transparent: true, opacity: 0.18 });
 const dotMat  = new THREE.MeshBasicMaterial({ color: '#f39a2b' });
+const NOW_AMBER = new THREE.Color('#f39a2b');
+const railMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
 
 // Every built object keeps its vertex positions in both layouts; applyMorph lerps them.
 let morphs = [];        // { geom, a, b, mesh }
@@ -844,7 +879,7 @@ function build() {
 
   // --- ribbon surface, one run per day so the strip can tear at midnight. The vertex colour
   // carries only the past/future shading; the day's texture carries the content.
-  const posA = [], posB = [], col = [], uv = [], past = [], fade = [], idx = [], mats = [];
+  const posA = [], posB = [], col = [], uv = [], past = [], future = [], focus = [], fade = [], idx = [], mats = [];
   const edgeA = [], edgeB = [], edgeCol = [];
   const days = [];
   let vi = 0;
@@ -863,11 +898,14 @@ function build() {
       col.push(c.r, c.g, c.b, c.r, c.g, c.b);
       uv.push(s - day, 0, s - day, 1);
       const pa = pastAt(s); past.push(pa, pa);
+      const fu = futureAt(s); future.push(fu, fu);
+      const fo = nowAt(s); focus.push(fo, fo);
       const fa = fadeAt(s); fade.push(fa, fa);
       if (i < n) idx.push(vi, vi + 1, vi + 2, vi + 1, vi + 3, vi + 2);
       vi += 2;
       // edges as segments, lifted a hair
       const ec = shade(new THREE.Color('#7a7e90'), s);
+      if (P.nowEdges) ec.lerp(NOW_AMBER, nowAt(s));
       const li = pair(s, -0.5, 0.01, day), lo = pair(s, 0.5, 0.01, day);
       if (prevIn) {
         push(edgeA, prevIn[0]); push(edgeA, li[0]); push(edgeB, prevIn[1]); push(edgeB, li[1]);
@@ -885,6 +923,8 @@ function build() {
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setAttribute('past', new THREE.Float32BufferAttribute(past, 1));
+  g.setAttribute('future', new THREE.Float32BufferAttribute(future, 1));
+  g.setAttribute('focus', new THREE.Float32BufferAttribute(focus, 1));
   g.setAttribute('fade', new THREE.Float32BufferAttribute(fade, 1));
   g.setIndex(idx);
   ribbonMesh = new THREE.Mesh(g, mats); ribbonDays = days;
@@ -928,6 +968,38 @@ function build() {
   const sa = [], sb = [];
   push(sa, m1[0]); push(sa, spokes[0]); push(sb, m1[1]); push(sb, spokes[1]);
   root.add(new THREE.LineSegments(morphGeometry(sa, sb, false), postMat));
+
+  // --- now edges: through the now stretch the ribbon's edges turn amber, like a selection
+  // outline. The edge lines take the colour above; a thin band just inside each edge gives it
+  // weight, since WebGL lines are only a pixel wide.
+  if (P.nowEdges) {
+    const A = LAY[view.from], B = LAY[view.to], ra = [], rb = [], rc = [], ri = [];
+    const t0 = Math.max(sMin, sNow - P.nowBehind / 24), t1 = Math.min(sMax, sNow + P.nowAhead / 24);
+    let vi = 0;
+    for (const side of [1, -1])
+      for (let day = Math.floor(t0); day <= Math.floor(t1); day++) {
+        const a = Math.max(t0, day), b = Math.min(t1, day + 1);
+        if (b - a <= 1e-6) continue;
+        const n = Math.max(2, Math.round((b - a) * 24 * 20));
+        for (let i = 0; i <= n; i++) {
+          const s = a + (b - a) * i / n, k = nowAt(s);
+          const vo = side * 0.5;
+          push(ra, A.place(s, vo - side * A.edgeW, 0.012, day)); push(ra, A.place(s, vo, 0.012, day));
+          push(rb, B.place(s, vo - side * B.edgeW, 0.012, day)); push(rb, B.place(s, vo, 0.012, day));
+          rc.push(NOW_AMBER.r, NOW_AMBER.g, NOW_AMBER.b, 0.85 * k, NOW_AMBER.r, NOW_AMBER.g, NOW_AMBER.b, 0.85 * k);
+          if (i < n) ri.push(vi, vi + 1, vi + 2, vi + 1, vi + 3, vi + 2);
+          vi += 2;
+        }
+      }
+    if (vi) {
+      const rg = morphGeometry(ra, rb, false);
+      rg.setAttribute('color', new THREE.Float32BufferAttribute(rc, 4));
+      rg.setIndex(ri);
+      const band = new THREE.Mesh(rg, railMat);
+      band.renderOrder = 1;      // after the ribbon, which is transparent too and would paint over it
+      root.add(band);
+    }
+  }
 
   buildLabels(sMin, sMax);
   applyMorph();
@@ -1379,10 +1451,20 @@ gTime.add(P, 'taskLabels').name('event labels').onChange(build);
 gTime.add(P, 'icons').onChange(() => { invalidateContent(); build(); });
 gTime.add(P, 'curvedLabels').name('curved labels');
 gTime.add(P, 'labelDays', 0.25, 4, 0.25).name('label range (d)').onChange(build);
-const gPast = gui.addFolder('past');
-gPast.add(P, 'pastDim', 0, 1, 0.01).name('dim').onChange(v => pastUniforms.dim.value = v);
-gPast.add(P, 'pastDesat', 0, 1, 0.01).name('desaturate').onChange(v => pastUniforms.desat.value = v);
-gPast.add(P, 'pastEdge', 0.25, 48, 0.25).name('fade range (h)').onChange(build);
+const gPast = gui.addFolder('past · present · future');
+gPast.add(P, 'pastDim', 0, 1, 0.01).name('past dim').onChange(v => strata.pastDim.value = v);
+gPast.add(P, 'pastDesat', 0, 1, 0.01).name('past desaturate').onChange(v => strata.pastDesat.value = v);
+gPast.add(P, 'pastEdge', 0.25, 48, 0.25).name('past edge (h)').onChange(build);
+gPast.add(P, 'presentBehind', 0, 24, 0.25).name('present behind (h)').onChange(build);
+gPast.add(P, 'presentSpan', 0, 24, 0.25).name('present ahead (h)').onChange(build);
+gPast.add(P, 'presentLift', 0, 0.5, 0.01).name('present lift').onChange(v => strata.presentLift.value = v);
+gPast.add(P, 'nowEdges').name('now edges').onChange(build);
+gPast.add(P, 'nowBehind', 0, 6, 0.25).name('now behind (h)').onChange(build);
+gPast.add(P, 'nowAhead', 0.5, 12, 0.25).name('now ahead (h)').onChange(build);
+gPast.add(P, 'nowLift', 0, 0.5, 0.01).name('now lift').onChange(v => strata.nowLift.value = v);
+gPast.add(P, 'futureEdge', 0.25, 12, 0.25).name('future edge (h)').onChange(build);
+gPast.add(P, 'futureDim', 0, 1, 0.01).name('future dim').onChange(v => strata.futureDim.value = v);
+gPast.add(P, 'futureDesat', 0, 1, 0.01).name('future desaturate').onChange(v => strata.futureDesat.value = v);
 gPast.add(P, 'endFade', 0, 24, 0.25).name('end feather (h)').onChange(build);
 gui.add({ topDown() { P.tilt = 0; P.spin = 0; view.anim = false; updateCamera(); refreshGui(); } }, 'topDown').name('↓ top-down (2D view)');
 function refreshGui() { gui.controllersRecursive().forEach(c => c.updateDisplay()); updateClockState(); }
