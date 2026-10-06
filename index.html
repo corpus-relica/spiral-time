@@ -77,6 +77,11 @@
   #legend span { display: flex; align-items: center; gap: 6px; }
   #legend i { width: 8px; height: 8px; border-radius: 2px; background: var(--swatch); }
   #legend .sample { flex-basis: 100%; color: #8e949e; font-size: 11px; margin-top: 3px; }
+  #legend .sample .warn { color: #e0a06a; }
+  #legend button { margin-left: 4px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 6px;
+    color: var(--text); background: var(--bg); font-size: 11px; cursor: pointer; }
+  #legend button:hover { background: var(--panel); }
+  #legend button:disabled { color: var(--muted); cursor: default; }
   #views { position: fixed; left: 50%; transform: translateX(-50%); bottom: 39px; display: flex; gap: 4px;
     padding: 5px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
   #views button { display: flex; align-items: center; gap: 8px; cursor: pointer; min-height: 42px;
@@ -221,6 +226,7 @@ const nowDay = () => P.nowHour / 24;
 // real time in hours since the load day's midnight, so it keeps counting past midnight
 const liveHour = () => (Date.now() - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 3.6e6;
 const easeInOut = k => k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+const esc = str => String(str).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
 if (P.view === 'coil') { P.tilt = 80; P.spin = -128.5; }
 
 // ---------------------------------------------------------------- spiral geometry
@@ -602,12 +608,9 @@ function sampleContent(dayMin, dayMax) {
       at(d, 'indicator', s, s + between(rw, 0.25, 0.6, 0.05), 'Walk', '#3fb8a8');
     }
 
-    // points: sun times from the time of year (about 40°N), a daily reminder, the odd deadline
-    const rp = rngFor(k, 'points'), b = d * 24;
-    const date = new Date(k * 864e5), doy = (k - Date.UTC(date.getUTCFullYear(), 0, 1) / 864e5);
-    const daylight = 12 + 3.1 * Math.sin(2 * Math.PI * (doy - 80) / 365.25);
-    points.push({ t: b + 12.6 - daylight / 2, kind: 'sun', c: '#e2b04a', n: 'Sunrise' });
-    points.push({ t: b + 12.6 + daylight / 2, kind: 'sun', c: '#b3b0ff', n: 'Sunset' });
+    // points: sun times, a daily reminder, the odd deadline
+    const rp = rngFor(k, 'points'), b = d * 24, date = new Date(k * 864e5);
+    sunPoints(points, d);
     points.push({ t: b + 8.5, kind: 'reminder', c: '#8fd3c9', n: 'Take meds' });
     if (date.getUTCDate() === 1) points.push({ t: b + 10, kind: 'reminder', c: '#8fd3c9', n: 'Pay rent' });
     if (!free && chance(rp, 0.12)) points.push({ t: b + pick(rp, [12, 17]), kind: 'deadline', c: '#e0574f',
@@ -623,6 +626,97 @@ function sampleContent(dayMin, dayMax) {
   packEvents(ranges.filter(r => r.kind === 'event'));
   packEvents(ranges.filter(r => r.kind === 'allday'));
   return { ranges, points, series };
+}
+
+// Real instants become wall-clock hours from the load day's midnight, in the browser's time zone,
+// so 9:00 sits at 9:00 even across a daylight-saving change.
+const day0 = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+const dayOf = (y, m, d) => Math.round((Date.UTC(y, m, d) - day0) / 864e5);     // m from 0
+const wallHours = j => dayOf(j.getFullYear(), j.getMonth(), j.getDate()) * 24 + j.getHours() + j.getMinutes() / 60 + j.getSeconds() / 3600;
+
+// Sunrise and sunset at SUN, by the NOAA solar calculator (sun's upper limb, standard refraction),
+// good to about a minute. San Francisco by default; ?lat=&lon= or SUN_LAT / SUN_LON in .env move it.
+const SUN = { lat: 37.7749, lon: -122.4194 };
+if (Number.isFinite(parseFloat(query.get('lat'))) && Number.isFinite(parseFloat(query.get('lon'))))
+  Object.assign(SUN, { lat: parseFloat(query.get('lat')), lon: parseFloat(query.get('lon')), fixed: true });
+// [rise, set] in ms since the epoch for the calendar date y-m-d at SUN, or null in polar day or night
+function sunTimes(y, m, d) {
+  const rad = Math.PI / 180, T = (Date.UTC(y, m, d, 12) / 864e5 + 2440587.5 - 2451545) / 36525;
+  const L0 = (280.46646 + T * (36000.76983 + 0.0003032 * T)) % 360, M = 357.52911 + T * (35999.05029 - 0.0001537 * T);
+  const e = 0.016708634 - T * (0.000042037 + 0.0000001267 * T);
+  const C = Math.sin(M * rad) * (1.914602 - T * (0.004817 + 0.000014 * T)) + Math.sin(2 * M * rad) * (0.019993 - 0.000101 * T)
+    + Math.sin(3 * M * rad) * 0.000289;
+  const om = 125.04 - 1934.136 * T, lambda = L0 + C - 0.00569 - 0.00478 * Math.sin(om * rad);
+  const eps = 23 + (26 + (21.448 - T * (46.815 + T * (0.00059 - T * 0.001813))) / 60) / 60 + 0.00256 * Math.cos(om * rad);
+  const decl = Math.asin(Math.sin(eps * rad) * Math.sin(lambda * rad));
+  const yy = Math.tan(eps / 2 * rad) ** 2;
+  const eqTime = 4 / rad * (yy * Math.sin(2 * L0 * rad) - 2 * e * Math.sin(M * rad) + 4 * e * yy * Math.sin(M * rad) * Math.cos(2 * L0 * rad)
+    - 0.5 * yy * yy * Math.sin(4 * L0 * rad) - 1.25 * e * e * Math.sin(2 * M * rad));     // minutes
+  const lat = SUN.lat * rad;
+  const ha = Math.acos(Math.cos(90.833 * rad) / (Math.cos(lat) * Math.cos(decl)) - Math.tan(lat) * Math.tan(decl)) / rad;
+  if (!Number.isFinite(ha)) return null;
+  const noon = Date.UTC(y, m, d) + (720 - 4 * SUN.lon - eqTime) * 6e4;
+  return [noon - 4 * ha * 6e4, noon + 4 * ha * 6e4];
+}
+function sunPoints(points, d) {
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+  const t = sunTimes(date.getFullYear(), date.getMonth(), date.getDate());
+  if (!t) return;
+  points.push({ t: wallHours(new Date(t[0])), kind: 'sun', c: '#e2b04a', n: 'Sunrise' });
+  points.push({ t: wallHours(new Date(t[1])), kind: 'sun', c: '#b3b0ff', n: 'Sunset' });
+}
+
+// Real calendars: the .ics files that serve.mjs (or npm run fetch) downloads into cal/, listed in
+// cal/index.json, on the same time axis as the sample. Timed events become events, date-only ones
+// all-day blocks, zero-length ones reminders; a calendar marked kind: 'context' draws as background
+// washes. Recurring events are expanded over the window, with their exceptions and cancellations
+// applied.
+const CAL_COLORS = ['#3d6e9c', '#b0743a', '#5fb0a6', '#9a6ad0', '#8fbf6a', '#c0533f', '#c08ad0', '#4a9a9a'];
+const icalHours = t => t.isDate ? dayOf(t.year, t.month - 1, t.day) * 24 : wallHours(t.toJSDate());
+
+function calendarContent(ICAL, cals, dayMin, dayMax) {
+  const ranges = [], points = [], lo = dayMin * 24, hi = (dayMax + 1) * 24;
+  for (const cal of cals) {
+    const root = new ICAL.Component(ICAL.parse(cal.text));
+    for (const tz of root.getAllSubcomponents('vtimezone')) ICAL.TimezoneService.register(tz);
+    const byUid = new Map();
+    for (const ve of root.getAllSubcomponents('vevent')) {
+      const uid = ve.getFirstPropertyValue('uid') || Math.random();
+      if (!byUid.has(uid)) byUid.set(uid, []);
+      byUid.get(uid).push(ve);
+    }
+    const add = (item, start, end) => {
+      if (item.component.getFirstPropertyValue('status') === 'CANCELLED') return;
+      const s = icalHours(start), n = item.summary || 'Busy';
+      let e = icalHours(end);
+      if (start.isDate) {
+        e = Math.max(e, s + 24);
+        if (e > lo && s < hi) ranges.push({ s, e, kind: 'allday', n, c: cal.color, cal: cal.title });
+      } else if (e <= s) {
+        if (s >= lo && s < hi) points.push({ t: s, kind: 'reminder', c: cal.color, n });
+      } else if (e > lo && s < hi) {
+        ranges.push({ s, e, kind: cal.kind, n, c: cal.color, cal: cal.title });
+      }
+    };
+    for (const comps of byUid.values()) {
+      const master = comps.find(c => !c.hasProperty('recurrence-id'));
+      // pass the exceptions explicitly: left to itself, ical.js relates every exception in the file
+      const exceptions = comps.filter(c => c !== master);
+      if (!master) { for (const c of exceptions) { const ev = new ICAL.Event(c, { exceptions: [] }); add(ev, ev.startDate, ev.endDate); } continue; }
+      const ev = new ICAL.Event(master, { exceptions });
+      if (!ev.isRecurring()) { add(ev, ev.startDate, ev.endDate); continue; }
+      const it = ev.iterator();
+      for (let next, i = 0; (next = it.next()) && i < 20000; i++) {
+        if (icalHours(next) > hi + 48) break;
+        const o = ev.getOccurrenceDetails(next);
+        add(o.item, o.startDate, o.endDate);
+      }
+    }
+  }
+  for (let d = dayMin; d <= dayMax; d++) sunPoints(points, d);
+  packEvents(ranges.filter(r => r.kind === 'event'));
+  packEvents(ranges.filter(r => r.kind === 'allday'));
+  return { ranges, points, series: [] };
 }
 
 // Assign overlapping events to sub-lanes, per overlap cluster, so a lone event gets the
@@ -1057,7 +1151,7 @@ function label(key, kind, html, spec) {
   }
   L.el.classList.toggle('today', kind === 'day' && spec.s === Math.floor(nowDay()));
   if (kind === 'task' && !L.svg) L.svg = curveFor(L);
-  if (L.html !== html) { L.el.innerHTML = html; L.html = html; L.width = null; if (L.svg) L.svg.tp.textContent = html; }
+  if (L.html !== html) { L.el.innerHTML = html; L.html = html; L.width = null; if (L.svg) L.svg.tp.textContent = L.el.textContent; }
   Object.assign(L, spec, { kind, used: true });
   labels.push(L);
 }
@@ -1084,8 +1178,8 @@ function buildLabels(sMin, sMax) {
     const cur = events.filter(t => P.nowHour >= t.s && P.nowHour < t.e).sort((a, b) => (a.e - a.s) - (b.e - b.s))[0];
     const curAll = alldays.find(t => P.nowHour >= t.s && P.nowHour < t.e);
     const html = `<div class="t">${fmtClock(P.nowHour)}</div>` + (cur
-      ? `<div class="n">${cur.n}</div><div class="u">until ${fmtClock(cur.e)} · ${fmtDuration(cur.e - P.nowHour)} left</div>`
-      : curAll ? `<div class="n">${curAll.n}</div><div class="u">all day</div>` : `<div class="u">free</div>`);
+      ? `<div class="n">${esc(cur.n)}</div><div class="u">until ${fmtClock(cur.e)} · ${fmtDuration(cur.e - P.nowHour)} left</div>`
+      : curAll ? `<div class="n">${esc(curAll.n)}</div><div class="u">all day</div>` : `<div class="u">free</div>`);
     label('now', 'now', html, {
       anchor: pair(sNow, 0.62, 0.03, dNow), inner: pair(sNow, -0.5, 0.03, dNow), s: sNow, callout: true,
     });
@@ -1108,7 +1202,7 @@ function buildLabels(sMin, sMax) {
         const [y0, y1] = eventBox(t), vc = yToV((y0 + y1) / 2);
         const arc = [];
         for (let i = 0; i <= 8; i++) arc.push(pair((a + (b - a) * i / 8) / 24, vc, 0.005, day));
-        label('task' + t.s + t.n + day, 'task', t.n, {
+        label('task' + t.s + t.n + day, 'task', esc(t.n), {
           anchor: arc[4], s: mid, tanA: arc[3], tanB: arc[5], arc, lanes: t.lanes,
           wIn: pair(mid, yToV(y1), 0, day), wOut: pair(mid, yToV(y0), 0, day),
         });
@@ -1120,7 +1214,7 @@ function buildLabels(sMin, sMax) {
       const day = Math.floor(s);
       // beside its icon when icons are on, otherwise just outside the outer edge
       const [i0, i1] = BAND.indicator;
-      label('pt' + pt.t, 'pt', pt.n, { anchor: pair(s, P.icons ? yToV((i0 + i1) / 2) : 0.5 / P.ribbonFill, 0.02, day),
+      label('pt' + pt.t + pt.n, 'pt', esc(pt.n), { anchor: pair(s, P.icons ? yToV((i0 + i1) / 2) : 0.5 / P.ribbonFill, 0.02, day),
         s, color: pt.c, besideIcon: P.icons });
     }
   }
@@ -1379,7 +1473,8 @@ function hover(e) {
   for (const r of rows) {
     const when = r.kind === 'allday' ? `${dayLabel(Math.floor(r.s / 24))}${r.e - r.s > 24 ? ` – ${dayLabel(Math.floor((r.e - 1) / 24))}` : ''}`
       : r.s != null ? `${fmtClock(r.s)}–${fmtClock(r.e)}${Math.floor(r.e / 24) > Math.floor(r.s / 24) ? ' (+1d)' : ''}` : '';
-    html += `<div><span class="sw" style="background:${r.c}"></span>${r.n} <span class="h">${r.kind === 'allday' ? 'all day' : r.kind} · ${when}</span></div>`;
+    const what = r.kind === 'allday' ? 'all day' : r.cal && r.kind === 'event' ? '' : r.kind;
+    html += `<div><span class="sw" style="background:${r.c}"></span>${esc(r.n)} <span class="h">${[r.cal && esc(r.cal), what, when].filter(Boolean).join(' · ')}</span></div>`;
   }
   if (y >= BAND.series[0] && y < BAND.series[1]) for (const sr of series) html += `<div><span class="sw" style="background:${sr.c}"></span>${sr.n} <span class="h">${Math.round(sr.at(t) * 100)}%</span></div>`;
   tip.innerHTML = html;
@@ -1492,6 +1587,56 @@ for (const b of viewButtons) b.addEventListener('click', () => {
   if (b.dataset.view === view.to) return;
   P.view = b.dataset.view; setView(P.view); rebuild(); refreshGui();
 });
+// ---------------------------------------------------------------- real calendars
+// cal/index.json exists when serve.mjs or npm run fetch has run; otherwise (GitHub Pages, ?mock)
+// the sample calendar stays. The legend then lists the calendars, with a Refresh button that asks
+// serve.mjs to download them again.
+const legend = document.getElementById('legend');
+const ICAL_URL = 'https://cdn.jsdelivr.net/npm/ical.js@2.2.1/dist/ical.js';
+const titleCase = s => s.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
+async function loadCalendars() {
+  if (query.has('mock')) return;
+  let index;
+  try {
+    const res = await fetch('cal/index.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    index = await res.json();
+  } catch { return; }
+  if (index.sun && !SUN.fixed) Object.assign(SUN, index.sun);
+  const listed = index.calendars.filter(c => c.file);
+  if (!listed.length) { content.data = sampleContent(-16, 16); invalidateContent(); rebuild(); return showLegend(index, []); }
+  const [{ default: ICAL }, texts] = await Promise.all([import(ICAL_URL),
+    Promise.all(listed.map(c => fetch('cal/' + c.file, { cache: 'no-store' }).then(r => r.text())))]);
+  const cals = listed.map((c, i) => ({ title: titleCase(c.name), color: c.color || CAL_COLORS[i % CAL_COLORS.length],
+    kind: c.kind === 'context' ? 'context' : 'event', text: texts[i] }));
+  content.data = calendarContent(ICAL, cals, -16, 16);
+  invalidateContent(); rebuild();
+  showLegend(index, cals);
+}
+function showLegend(index, cals) {
+  const failed = index.calendars.filter(c => !c.ok);
+  const fetched = new Date(index.fetched).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  legend.innerHTML = cals.map(c => `<span><i style="--swatch:${esc(c.color)}"></i>${esc(c.title)}</span>`).join('')
+    + `<span><i style="--swatch:#e8b865"></i>Now</span>`
+    + `<span class="sample">Updated ${fetched}${failed.length ? ` · <span class="warn" title="${esc(failed.map(c => `${c.name}: ${c.error}`).join('\n'))}">${failed.length} failed</span>` : ''}`
+    + `<button type="button" id="cal-refresh">Refresh</button></span>`;
+  document.getElementById('cal-refresh').addEventListener('click', refreshCalendars);
+}
+async function refreshCalendars() {
+  const btn = document.getElementById('cal-refresh');
+  btn.disabled = true; btn.textContent = 'Refreshing…';
+  const res = await fetch('api/refresh', { method: 'POST' }).catch(() => null);
+  if (!res?.ok) {
+    // a plain static server has no api/refresh: npm start provides it
+    const missing = !res || res.status === 404 || res.status === 405 || res.status === 501;
+    btn.textContent = missing ? 'Needs npm start' : 'Refresh failed';
+    btn.title = missing ? 'Refresh needs the local server: npm start' : `server answered ${res.status}`;
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Refresh'; }, 4000);
+    return;
+  }
+  await loadCalendars().catch(e => console.error('calendars:', e.message));
+}
+
 document.getElementById('hint').textContent = matchMedia('(pointer: coarse)').matches
   ? 'drag to tilt and spin · pinch to zoom · tap for details'
   : 'drag to tilt and spin · scroll to zoom · hover for details';
@@ -1501,6 +1646,7 @@ resize();
 rebuild();
 showView();
 updateClockState();
+loadCalendars().catch(e => console.error('calendars:', e.message));
 const TRANSITION_S = 0.9;
 let last = performance.now();
 renderer.setAnimationLoop(t => {

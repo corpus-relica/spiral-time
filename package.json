@@ -1,0 +1,10 @@
+{
+  "name": "spiral-time",
+  "private": true,
+  "description": "A day timeline drawn as a ribbon in 3D",
+  "scripts": {
+    "start": "node serve.mjs",
+    "fetch": "node fetch-cals.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
